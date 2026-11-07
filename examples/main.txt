@@ -1,0 +1,455 @@
+/*
+ * S32K344 (FlexCAN0 @ 1 Mbps) <-> GIM6010-8, protocolo "Custom CAN V3.10b2" (GDZ)
+ *
+ * Puntos clave del documento:
+ *  - Direccion por defecto Dev_addr = 0x01 (rango 1..254; 0x00 broadcast; 0xFF comun)
+ *  - El esclavo acepta comandos con ID = Dev_addr  O  (0x100 | Dev_addr)
+ *  - El esclavo SIEMPRE responde con ID = Dev_addr
+ *    => el maestro debe TRANSMITIR con 0x100|Dev_addr y FILTRAR la recepcion en Dev_addr.
+ *       Asi el eco propio del FlexCAN (ID 0x101) nunca coincide con el filtro (0x01).
+ *  - Little endian, tramas estandar, DLC segun comando.
+ *
+ * NOTA: NO esta compilado contra tu RTD. Revisa nombres/firmas en FlexCAN_Ip.h.
+ * Modo POLLING (tu .mex no instala ISR de FlexCAN).
+ */
+
+#include <string.h>
+#include <stdio.h>
+#include "Clock_Ip.h"
+#include "Siul2_Port_Ip.h"
+#include "Lpuart_Uart_Ip.h"
+#include "FlexCAN_Ip.h"
+
+/* Descomenta para DIAGNOSTICO: la MB0 acepta CUALQUIER ID y se imprime todo lo que llegue */
+//#define DIAG_ACCEPT_ALL
+
+/* ---------------- SIUL2 / LPUART ---------------- */
+#define SIUL_CONFIG   g_pin_mux_InitConfigArr_PortContainer_0_BOARD_InitPeripherals
+#define NUM_PINS      NUM_OF_CONFIGURED_PINS_PortContainer_0_BOARD_InitPeripherals
+#define UART_INSTANCE 6U
+#define UART_CONFIG   &Lpuart_Uart_Ip_xHwConfigPB_6
+
+/* ---------------- CAN ---------------- */
+#define CAN_INSTANCE  0U
+#define CAN_CONFIG    &FlexCAN_Config0
+#define CAN_STATE     &FlexCAN_State0
+#define RX_MB         0U
+#define TX_MB         1U
+#define CAN_TIMEOUT   2000000UL
+
+/* ---------------- Comandos (documento GDZ) ---------------- */
+#define CMD_REBOOT      0x00U
+#define CMD_READ_VER    0xA0U
+#define CMD_READ_A3     0xA3U
+#define CMD_READ_A4     0xA4U
+#define CMD_READ_AE     0xAEU
+#define CMD_CLEAR_FLT   0xAFU
+#define CMD_SET_ADDR    0xBAU
+#define CMD_SPEED       0xC1U   /* int32, 0.01 rpm        */
+#define CMD_POS_TRAP    0xDAU   /* tipo(0 abs/1 rel) + int32 counts */
+#define CMD_TRAP_ACC    0xD0U   /* uint32, 0.01 rpm/s     */
+#define CMD_TRAP_DEC    0xD1U   /* uint32, 0.01 rpm/s     */
+#define CMD_DISABLE     0xCFU
+
+#define POS_ABSOLUTE    0x00U
+#define POS_RELATIVE    0x01U
+#define COUNTS_PER_REV  16384L
+#define PASO_90         (COUNTS_PER_REV / 4L)
+
+/* Direccion actual del motor (variable: se puede cambiar con 0xBA) */
+static uint32 g_addr_1 = 0x01U;
+static uint32 g_addr_2 = 0x02U;
+static uint32 g_addr_3 = 0x03U;
+static uint32 g_addr_4 = 0x04U;
+
+/* 1: TX con 0x100|addr (recomendado por el documento)   0: TX con addr (como tu Arduino) */
+#define TX_USE_0x100  1
+#if (TX_USE_0x100 == 1)
+#define TX_ID_1()   (0x100U | g_addr_1)
+#define TX_ID_2()   (0x100U | g_addr_2)
+#define TX_ID_3()   (0x100U | g_addr_3)
+#define TX_ID_4()   (0x100U | g_addr_4)
+#else
+#define TX_ID()   (g_addr)
+#endif
+
+static Flexcan_Ip_MsgBuffType rxMsg;
+
+static Flexcan_Ip_DataInfoType txInfo =
+{
+    .msg_id_type = FLEXCAN_MSG_ID_STD, .data_length = 8U,
+    .fd_enable = FALSE, .enable_brs = FALSE, .is_polling = TRUE, .is_remote = FALSE
+};
+static Flexcan_Ip_DataInfoType rxInfo =
+{
+    .msg_id_type = FLEXCAN_MSG_ID_STD, .data_length = 8U,
+    .fd_enable = FALSE, .enable_brs = FALSE, .is_polling = TRUE, .is_remote = FALSE
+};
+
+/* ---------------- Utilidades ---------------- */
+static void uartPrint(const char *s)
+{
+    (void)Lpuart_Uart_Ip_SyncSend(UART_INSTANCE, (const uint8 *)s, (uint32)strlen(s), 10000U);
+}
+
+/* Aproximado. Mejor: OsIf System Timer habilitado en el .mex */
+static void delayMs(uint32 ms)
+{
+    volatile uint32 i;
+    while (ms--) { for (i = 0U; i < 20000UL; i++) { __asm("nop"); } }
+}
+
+static void putI32(uint8 *b, sint32 v)
+{
+    uint32 u = (uint32)v;
+    b[0] = (uint8)u; b[1] = (uint8)(u >> 8); b[2] = (uint8)(u >> 16); b[3] = (uint8)(u >> 24);
+}
+
+static sint32 getI32(const uint8 *b)
+{
+    return (sint32)((uint32)b[0] | ((uint32)b[1] << 8) | ((uint32)b[2] << 16) | ((uint32)b[3] << 24));
+}
+
+static uint16 getU16(const uint8 *b) { return (uint16)((uint16)b[0] | ((uint16)b[1] << 8)); }
+static sint16 getS16(const uint8 *b) { return (sint16)getU16(b); }
+
+/* ---------------- CAN bajo nivel ---------------- */
+static Flexcan_Ip_StatusType canSend(const uint8 *data, uint8 len, uint8 tx_id)
+{
+    Flexcan_Ip_StatusType st;
+    uint32 t;
+
+    txInfo.data_length = len;
+    st = FlexCAN_Ip_Send(CAN_INSTANCE, TX_MB, &txInfo, tx_id, data);
+    if (st != FLEXCAN_STATUS_SUCCESS) { return st; }
+
+    for (t = 0U; t < CAN_TIMEOUT; t++)   /* sin ACK el frame se reintenta para siempre */
+    {
+        FlexCAN_Ip_MainFunctionWrite(CAN_INSTANCE, TX_MB);
+        st = FlexCAN_Ip_GetTransferStatus(CAN_INSTANCE, TX_MB);
+        if (st != FLEXCAN_STATUS_BUSY) { return st; }
+    }
+    return FLEXCAN_STATUS_TIMEOUT;
+}
+
+static Flexcan_Ip_StatusType initCAN(void);   /* declaracion adelantada */
+
+/* Registros de error del FlexCAN0: ESR1 (flags de error) y ECR (contadores TX/RX) */
+static void canErrReport(void)
+{
+    char l[80];
+    (void)snprintf(l, sizeof(l), "ESR1=0x%08lX ECR=0x%08lX\r\n");
+    uartPrint(l);
+}
+
+/* Tras un TIMEOUT la MB de TX queda ocupada y todo Send posterior devuelve BUSY.
+   Reiniciar el modulo la libera (verifica que FlexCAN_Ip_Deinit exista en tu RTD). */
+static void canRecover(void)
+{
+    (void)FlexCAN_Ip_Deinit(CAN_INSTANCE);
+    (void)initCAN();
+}
+
+static Flexcan_Ip_StatusType armRx(void)
+{
+    return FlexCAN_Ip_Receive(CAN_INSTANCE, RX_MB, &rxMsg, TRUE);   /* TRUE = polling */
+}
+
+/* "Listo" = cualquier estado distinto de BUSY (incluye overrun u otros), asi no se cuelga */
+static boolean rxReady(void)
+{
+    FlexCAN_Ip_MainFunctionRead(CAN_INSTANCE, RX_MB);
+    return (FlexCAN_Ip_GetTransferStatus(CAN_INSTANCE, RX_MB) != FLEXCAN_STATUS_BUSY);
+}
+
+/*
+ * Transaccion: arma RX, envia, y espera una respuesta con data[0]==expect y DLC>=minLen.
+ * Ignora cualquier otra trama (p. ej. 0xAE periodicos de falla) y vuelve a armar.
+ */
+static boolean motorXfer(const uint8 *d, uint8 len, uint8 expect, uint8 minLen, uint8 tx_id)
+{
+    Flexcan_Ip_StatusType st;
+    char e[48];
+    uint32 t;
+
+    (void)armRx();
+    st = canSend(d, len,tx_id);
+    if (st != FLEXCAN_STATUS_SUCCESS)
+    {
+        (void)snprintf(e, sizeof(e), "TX 0x%02X fallo st=%ld\r\n", (unsigned)d[0], (long)st);
+        uartPrint(e);
+        return FALSE;
+    }
+
+    for (t = 0U; t < CAN_TIMEOUT; t++)
+    {
+        if (rxReady())
+        {
+            if ((rxMsg.dataLen >= minLen) && (rxMsg.data[0] == expect)) { return TRUE; }
+            (void)armRx();
+        }
+    }
+    (void)snprintf(e, sizeof(e), "Sin respuesta a 0x%02X\r\n", (unsigned)expect);
+    uartPrint(e);
+    return FALSE;
+}
+
+/* Diagnostico: imprime TODO lo que llegue a MB0 durante 'loops' iteraciones */
+static void diagRx(uint32 loops)
+{
+    char l[110];
+    uint32 t;
+    for (t = 0U; t < loops; t++)
+    {
+        if (rxReady())
+        {
+            (void)snprintf(l, sizeof(l),
+                "RX id=0x%lX dlc=%u: %02X %02X %02X %02X %02X %02X %02X %02X\r\n",
+                (unsigned long)rxMsg.msgId, (unsigned)rxMsg.dataLen,
+                (unsigned)rxMsg.data[0], (unsigned)rxMsg.data[1], (unsigned)rxMsg.data[2],
+                (unsigned)rxMsg.data[3], (unsigned)rxMsg.data[4], (unsigned)rxMsg.data[5],
+                (unsigned)rxMsg.data[6], (unsigned)rxMsg.data[7]);
+            uartPrint(l);
+            (void)armRx();
+        }
+    }
+}
+
+/* ---------------- Comandos del motor ---------------- */
+static boolean motorLeerVersion(uint8 tx_id)           /* 0xA0: buen "ping" inicial */
+{
+    uint8 d = CMD_READ_VER;
+    char l[96];
+    if (!motorXfer(&d, 1U, CMD_READ_VER, 8U, tx_id)) {(void)snprintf(l, sizeof(l), "NADA"); uartPrint(l); return FALSE; }
+    (void)snprintf(l, sizeof(l), "Ver: boot=%u app=%u hw=%u can=%u\r\n",
+                   (unsigned)getU16(&rxMsg.data[1]), (unsigned)getU16(&rxMsg.data[3]),
+                   (unsigned)getU16(&rxMsg.data[5]), (unsigned)rxMsg.data[7]);
+    uartPrint(l);
+    return TRUE;
+}
+static boolean motorLeerA4(uint8 tx_id)
+{
+    uint8 d = CMD_READ_A4;
+    char l[100];
+    uint16 pRaw;
+    uint32 pMdeg;
+
+    if (!motorXfer(&d, 1U, CMD_READ_A4, 8U, tx_id)) { return FALSE; }
+
+    pRaw  = getU16(&rxMsg.data[6]);
+    pMdeg = ((uint32)pRaw * 45000UL) / 2048UL;               /* milesimas de grado */
+    (void)snprintf(l, sizeof(l),
+                   "A4: T=%uC corr=%ldmA vel=%ld(x0.01rpm) pos=%lu.%03lu deg\r\n",
+                   (unsigned)rxMsg.data[1], (long)getS16(&rxMsg.data[2]), (long)getS16(&rxMsg.data[4]),
+                   (unsigned long)(pMdeg / 1000UL), (unsigned long)(pMdeg % 1000UL));
+    uartPrint(l);
+    return TRUE;
+}
+
+static boolean motorLeerAE(uint8 tx_id)                /* estado general y fallas */
+{
+    uint8 d = CMD_READ_AE;
+    char l[100];
+    if (!motorXfer(&d, 1U, CMD_READ_AE, 8U, tx_id)) { return FALSE; }
+    (void)snprintf(l, sizeof(l), "AE: Vbus=%u(x0.01V) Ibus=%u(x0.01A) T=%uC modo=%u falla=0x%02X\r\n",
+                   (unsigned)getU16(&rxMsg.data[1]), (unsigned)getU16(&rxMsg.data[3]),
+                   (unsigned)rxMsg.data[5], (unsigned)rxMsg.data[6], (unsigned)rxMsg.data[7]);
+    uartPrint(l);
+    return TRUE;
+}
+
+static boolean motorClearFaults(uint8 tx_id)
+{
+    uint8 d = CMD_CLEAR_FLT;
+    return motorXfer(&d, 1U, CMD_CLEAR_FLT, 2U, tx_id);
+}
+
+/* Velocidad en 0.01 rpm (3000 = 30 rpm). Respuesta: DLC 5, velocidad int32 */
+static boolean motorVelocidad(uint8 tx_id, sint32 centiRpm)
+{
+    uint8 d[5];
+    d[0] = CMD_SPEED;
+    putI32(&d[1], centiRpm);
+    return motorXfer(d, 5U, CMD_SPEED, 5U, tx_id);
+}
+
+/* Posicion con perfil trapezoidal. tipo: POS_ABSOLUTE / POS_RELATIVE. 16384 counts = 360 deg */
+static boolean motorPosTrap(uint8 tx_id, uint8 tipo, sint32 counts)
+{
+    uint8 d[6];
+    d[0] = CMD_POS_TRAP;
+    d[1] = tipo;
+    putI32(&d[2], counts);
+    return motorXfer(d, 6U, CMD_POS_TRAP, 7U, tx_id);
+}
+
+/* Aceleracion/deceleracion del perfil trapezoidal, en 0.01 rpm/s */
+static boolean motorTrapAccelDecel(uint8 tx_id, uint32 acc, uint32 dec)
+{
+    uint8 d[5];
+    boolean ok;
+    d[0] = CMD_TRAP_ACC; putI32(&d[1], (sint32)acc);
+    ok = motorXfer(d, 5U, CMD_TRAP_ACC, 5U, tx_id);
+    d[0] = CMD_TRAP_DEC; putI32(&d[1], (sint32)dec);
+    ok = (motorXfer(d, 5U, CMD_TRAP_DEC, 5U, tx_id) && ok);
+    return ok;
+}
+
+static boolean motorDisable(uint8 tx_id)               /* 0xCF: salida libre */
+{
+    uint8 d = CMD_DISABLE;
+    return motorXfer(&d, 1U, CMD_DISABLE, 8U, tx_id);
+}
+
+static boolean motorCambiarDireccion(uint8 tx_id, uint8 nueva)
+{
+    uint8 d[2];
+    static const uint8 reboot[8] = { 0x00U, 0xFFU, 0x00U, 0xFFU, 0x00U, 0xFFU, 0x00U, 0xFFU };
+    Flexcan_Ip_StatusType st;
+
+    if ((nueva < 1U) || (nueva > 254U)) { return FALSE; }
+
+    d[0] = CMD_SET_ADDR;
+    d[1] = nueva;
+    if (!motorXfer(d, 2U, CMD_SET_ADDR, 2U, tx_id)) { return FALSE; }
+
+    (void)canSend(reboot, 8U, tx_id);          /* el esclavo reinicia sin responder */
+    delayMs(2000U);
+
+    /* OJO: Aquí deberás actualizar la variable g_addr correspondiente al tx_id modificado. */
+    /* Para simplificar, asumo que usas la variable global o los macros definidos arriba */
+
+    st = FlexCAN_Ip_ConfigRxMb(CAN_INSTANCE, RX_MB, &rxInfo, nueva);
+    if (st != FLEXCAN_STATUS_SUCCESS) { return FALSE; }
+    (void)armRx();
+
+    /* Nota: Se usa el ID base sin el 0x100 para el ping de comprobación si lo requiere la lógica,
+       o simplemente pásale el nuevo TX_ID recalculado */
+    return motorLeerVersion(0x100U | nueva);
+}
+
+
+
+/* ---------------- Init ---------------- */
+static void initPeriphericals(void)
+{
+    Clock_Ip_Init(Clock_Ip_aClockConfig);
+    Clock_Ip_InitClock(Clock_Ip_aClockConfig);
+    while (Clock_Ip_GetPllStatus() != CLOCK_IP_PLL_LOCKED) { __asm("nop"); }
+    Clock_Ip_DistributePll();
+
+    Siul2_Port_Ip_Init(NUM_PINS, SIUL_CONFIG);
+    Lpuart_Uart_Ip_Init(UART_INSTANCE, UART_CONFIG);
+}
+
+static Flexcan_Ip_StatusType initCAN(void)
+{
+    Flexcan_Ip_StatusType st;
+
+    st = FlexCAN_Ip_Init_Privileged(CAN_INSTANCE, CAN_STATE, CAN_CONFIG);
+    if (st != FLEXCAN_STATUS_SUCCESS) { return st; }
+
+
+
+
+#ifdef DIAG_ACCEPT_ALL
+    /* Mascara 0 = acepta todo (verifica la firma en tu RTD). Debe ir antes del Start. */
+    FlexCAN_Ip_SetRxMbGlobalMask_Privileged(CAN_INSTANCE, FLEXCAN_MSG_ID_STD);
+#endif
+
+    FlexCAN_Ip_SetStartMode_Privileged(CAN_INSTANCE);
+    return armRx();
+}
+
+/* ---------------- main ---------------- */
+int main(void)
+{
+    Flexcan_Ip_StatusType st;
+
+    initPeriphericals();
+    uartPrint("\r\nGIM6010-8 protocolo GDZ\r\n");
+
+    st = initCAN();
+    if (st != FLEXCAN_STATUS_SUCCESS)
+    {
+        char e[40];
+        (void)snprintf(e, sizeof(e), "Error initCAN: %ld\r\n", (long)st);
+        uartPrint(e);
+    }
+
+#ifdef DIAG_ACCEPT_ALL
+    /* Debes ver DOS tramas por comando: eco propio (id 0x101) y respuesta (id 0x1) */
+    for (;;)
+    {
+        uint8 d = CMD_READ_VER;
+        uartPrint("--- TX A0 ---\r\n");
+        (void)canSend(&d, 1U,TX_ID_1());
+        diagRx(300000UL);
+        delayMs(500U);
+    }
+#endif
+
+    /* Arreglo con los IDs de transmisión definidos en las macros */
+        uint8 motores_tx_ids[] = { TX_ID_1(), TX_ID_2(), TX_ID_3(), TX_ID_4() };
+        uint8 num_motores = sizeof(motores_tx_ids) / sizeof(motores_tx_ids[0]);
+        uint8 m;
+        uint32 i;
+
+        /* Rutina secuencial: Mueve el ID1, luego el ID2, etc. */
+        for (m = 0; m < num_motores; m++)
+        {
+            uint8 current_tx = motores_tx_ids[m];
+            uint8 current_rx = current_tx & 0xFFU;  /* Extrae el ID base (0x01, 0x02...) para el filtro RX */
+
+            char msg[60];
+            (void)snprintf(msg, sizeof(msg), "\r\n--- Inicializando Motor %d (TX: 0x%03X, RX: 0x%02X) ---\r\n",
+                           m+1, current_tx, current_rx);
+            uartPrint(msg);
+
+            /* 1) CAMBIO DINÁMICO DE FILTRO: Escuchar solo al motor actual */
+            (void)FlexCAN_Ip_ConfigRxMb(CAN_INSTANCE, RX_MB, &rxInfo, current_rx);
+            (void)armRx();
+
+            /* 2) Comprobación de conexión */
+            while (!motorLeerVersion(current_tx))
+            {
+                canErrReport();
+                canRecover();
+                /* Al recuperar el CAN, el filtro vuelve a su estado por defecto, hay que re-aplicarlo */
+                (void)FlexCAN_Ip_ConfigRxMb(CAN_INSTANCE, RX_MB, &rxInfo, current_rx);
+                (void)armRx();
+                delayMs(1000U);
+            }
+
+            (void)motorLeerAE(current_tx);
+            (void)motorClearFaults(current_tx);
+            (void)motorLeerA4(current_tx);
+            (void)motorTrapAccelDecel(current_tx, 10000UL, 10000UL); // 100 rpm/s
+
+            uartPrint("Moviendo...\r\n");
+
+            /* 3) Movimiento relativo +90 grados */
+            (void)motorPosTrap(current_tx, POS_RELATIVE, PASO_90);
+
+            for (i = 0U; i < 30U; i++) {
+                (void)motorLeerA4(current_tx);
+                delayMs(100U);
+            }
+
+            /* 4) Movimiento relativo -90 grados (regreso) */
+            (void)motorPosTrap(current_tx, POS_RELATIVE, -PASO_90);
+
+            for (i = 0U; i < 30U; i++) {
+                (void)motorLeerA4(current_tx);
+                delayMs(100U);
+            }
+
+            /* 5) Deshabilita el motor antes de pasar al siguiente */
+            (void)motorDisable(current_tx);
+        }
+
+        uartPrint("\r\nFIN DE RUTINA SECUENCIAL\r\n");
+        for(;;);
+        return 0;
+}
+
