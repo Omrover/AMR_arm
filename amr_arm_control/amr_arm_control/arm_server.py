@@ -4,17 +4,22 @@
     pick_object   abrir -> pregrasp -> bajar -> cerrar (grasped) -> subir
     place_object  sobre el destino -> bajar -> abrir -> subir
 
-Habla con amr_mqtt_bridge (o gz_mcu en simulación) por llc/arm_command y
-llc/set_gripper, y sigue el movimiento con /joint_states y arm/status. Los
-movimientos son punto a punto sincronizados (trajectory.py). Al cancelar, el
-brazo se queda donde está.
+Con use_moveit (por defecto) cada movimiento se planea y ejecuta con
+move_group: los traslados con OMPL (libres de colisión) y las bajadas/subidas
+de pick y place en línea recta con Pilz LIN. La IK analítica (posición del TCP
++ pitch) sigue dando las metas en juntas, exactas para 4 GDL. La ejecución la
+hace arm_controller sobre el bridge. Con use_moveit:=false manda punto a punto
+sincronizado directo por llc/arm_command (trajectory.py), sin revisar colisiones.
+
+El gripper va directo por llc/set_gripper; el estado se sigue con
+/joint_states y arm/status. Al cancelar, el brazo se queda donde está.
 """
 import math
 import threading
 import time
 
 import rclpy
-from rclpy.action import ActionServer, CancelResponse, GoalResponse
+from rclpy.action import ActionClient, ActionServer, CancelResponse, GoalResponse
 from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
@@ -22,6 +27,11 @@ from rclpy.qos import qos_profile_sensor_data, QoSProfile, DurabilityPolicy, Rel
 from rclpy.time import Time
 from sensor_msgs.msg import JointState
 from tf2_ros import Buffer, TransformException, TransformListener
+
+from moveit_msgs.action import MoveGroup
+from moveit_msgs.msg import (Constraints, JointConstraint, MotionPlanRequest, MoveItErrorCodes,
+                             RobotState)
+from moveit_msgs.srv import GetStateValidity
 
 from amr_interfaces.action import MoveArm, PickObject, PlaceObject
 from amr_interfaces.msg import ArmStatus
@@ -31,6 +41,16 @@ from . import kinematics as kin
 from . import trajectory as traj
 
 OK, ERR_IK, ERR_LIMITS, ERR_MCU, ERR_TIMEOUT, ERR_CANCELED, ERR_GRASP = 0, 1, 2, 3, 4, 5, 6
+# MoveItErrorCodes -> error_code de las acciones. Sin plan (colisión, IK de
+# Pilz, tiempo) cuenta como ERR_IK: la meta existe pero no es alcanzable.
+# Las constantes de los mensajes ROS viven en la metaclase.
+MOVEIT_NAMES = {getattr(MoveItErrorCodes, k): k for k in dir(type(MoveItErrorCodes))
+                if k.isupper() and isinstance(getattr(MoveItErrorCodes, k, None), int)}
+MOVEIT_ERRORS = {getattr(MoveItErrorCodes, k): v for k, v in (
+    ('CONTROL_FAILED', ERR_MCU), ('INVALID_MOTION_PLAN', ERR_MCU),
+    ('MOTION_PLAN_INVALIDATED_BY_ENVIRONMENT_CHANGE', ERR_MCU), ('PREEMPTED', ERR_CANCELED),
+    ('START_STATE_IN_COLLISION', ERR_LIMITS), ('START_STATE_INVALID', ERR_LIMITS),
+) if hasattr(MoveItErrorCodes, k)}
 STATUS_QOS = QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL,
                         reliability=ReliabilityPolicy.RELIABLE)
 TOP_DOWN = -math.pi / 2
@@ -38,9 +58,9 @@ TOP_DOWN = -math.pi / 2
 # ajustarlas con la geometría real del CAD (config/arm_server.yaml).
 DEFAULT_POSES = {
     'stow': [0.0, 0.865, -0.651, 1.357],        # TCP sobre el centro, 0.30 m arriba
-    'dock_view': [0.0, 1.25, 0.1, 1.7],         # cámara horizontal a 0.38 m (dock)
+    'dock_view': [0.0, 1.46, 0.02, 1.57],       # cámara casi horizontal a 0.48 m (dock)
     'scan': [math.pi, 1.469, -0.965, 0.295],    # cámara 0.3 m adelante, 0.8 rad abajo
-    'tray_above': [math.pi, 1.487, 1.14, -1.055],  # TCP 0.15 m sobre la bandeja
+    'tray_above': [math.pi, 0.06, -0.4, 1.912],    # TCP 0.15 m sobre la bandeja
 }
 
 
@@ -65,7 +85,7 @@ class ArmServer(Node):
         d = self.declare_parameter
         d('arm_joints', ['arm_joint_1', 'arm_joint_2', 'arm_joint_3', 'arm_joint_4'])
         d('arm_lower', [-math.pi, -math.pi / 2, -2.5, -2.5])
-        d('arm_upper', [math.pi, math.pi / 2, 2.5, 2.5])
+        d('arm_upper', [math.pi, math.pi / 2, 0.1, 2.5])   # q3 <= 0.1: el codo no cruza el eslabón 2
         d('base_frame', 'arm_base_link')
         d('tray_frame', 'tray_link')
         d('max_accel', 1.5)              # rad/s^2 con velocity_scale = 1
@@ -80,6 +100,14 @@ class ArmServer(Node):
         d('gripper_max_current', 1.0)    # A (ACS712)
         d('gripper_timeout', 3.0)
         d('require_grasp', True)         # false en simulación (gz_mcu no detecta pieza)
+        d('use_moveit', True)            # false: punto a punto directo, sin colisiones
+        d('planning_group', 'arm')
+        d('planning_time', 5.0)          # s por intento
+        d('planning_attempts', 3)
+        d('goal_joint_tolerance', 0.005)  # rad en la meta de MoveIt
+        d('linear_planner', 'LIN')       # Pilz: bajadas y subidas rectas
+        d('gripper_joint', 'gripper_finger_joint')   # arm.yaml
+        d('gripper_travel', 0.035)       # m: el joint con el gripper abierto (arm.yaml)
         g = lambda n: self.get_parameter(n).value  # noqa: E731
         self.joints = list(g('arm_joints'))
         self.lower, self.upper = list(g('arm_lower')), list(g('arm_upper'))
@@ -101,6 +129,9 @@ class ArmServer(Node):
                                  callback_group=cb)
         self.arm_cli = self.create_client(ArmCommand, 'llc/arm_command', callback_group=cb)
         self.grip_cli = self.create_client(SetGripper, 'llc/set_gripper', callback_group=cb)
+        self.move_group = ActionClient(self, MoveGroup, 'move_action', callback_group=cb)
+        self.validity_cli = self.create_client(GetStateValidity, 'check_state_validity',
+                                               callback_group=cb)
         self.tf = Buffer()
         self.tf_listener = TransformListener(self.tf, self, spin_thread=True)
         for name, typ, fn in (('move_arm', MoveArm, self.exec_move),
@@ -172,7 +203,9 @@ class ArmServer(Node):
             except Failure as e:
                 self.get_logger().error(f'no se pudo detener el brazo: {e}')
 
-    def move_joints(self, goal_handle, q_goal, scale=1.0, on_progress=None):
+    def move_joints(self, goal_handle, q_goal, scale=1.0, on_progress=None, linear=False):
+        """Mueve a q_goal. linear: el TCP en línea recta (Pilz LIN; sin MoveIt
+        es punto a punto como cualquier otro movimiento)."""
         if len(q_goal) != len(self.joints):
             raise Failure(ERR_LIMITS, f'se esperaban {len(self.joints)} juntas')
         bad = [self.joints[i] for i, v in enumerate(q_goal)
@@ -182,6 +215,9 @@ class ArmServer(Node):
         if not self.wait_for(lambda: self.joints_now() is not None, 3.0):
             raise Failure(ERR_MCU, 'sin /joint_states del brazo')
         self.ensure_enabled()
+        if self.get_parameter('use_moveit').value:
+            self.move_moveit(goal_handle, q_goal, scale, on_progress, linear)
+            return
         q0 = self.joints_now()
         a_max = self.get_parameter('max_accel').value * max(0.05, min(1.0, scale or 1.0))
         res = self.call(self.arm_cli, ArmCommand.Request(
@@ -207,6 +243,99 @@ class ArmServer(Node):
         except Failure:
             self.hold()
             raise
+
+    def wait_future(self, fut, timeout, what):
+        end = time.monotonic() + timeout
+        while not fut.done():
+            if time.monotonic() > end:
+                raise Failure(ERR_MCU, f'{what}: sin respuesta en {timeout:.0f} s')
+            time.sleep(0.01)
+        return fut.result()
+
+    def check_states(self, named):
+        """Revisa con move_group que cada (nombre, q) esté libre de colisiones
+        antes de mover nada: una secuencia de pick o place no arranca si alguna
+        de sus poses choca. Cada pose se revisa con el gripper abierto y cerrado:
+        en pick y place pasa por los dos (los dedos abiertos se abren hacia los
+        lados, cerrados quedan al centro). Sin MoveIt no hace nada."""
+        g = lambda n: self.get_parameter(n).value  # noqa: E731
+        if not g('use_moveit'):
+            return
+        if not self.validity_cli.wait_for_service(timeout_sec=5.0):
+            raise Failure(ERR_MCU, 'sin move_group (servicio check_state_validity)')
+        names = self.joints + [g('gripper_joint')]
+        # Margen: el controlador da por alcanzada una pose a joint_tolerance; una
+        # pose que solo es válida en el valor exacto falla al ejecutar la siguiente.
+        tol = float(g('joint_tolerance'))
+        for name, q in named:
+            variants = [list(q)]
+            for i in range(len(q)):
+                for s in (-tol, tol):
+                    v = list(q)
+                    v[i] += s
+                    variants.append(v)
+            for v in variants:
+                for grip, grip_name in ((float(g('gripper_travel')), 'abierto'), (0.0, 'cerrado')):
+                    req = GetStateValidity.Request(group_name=g('planning_group'))
+                    req.robot_state = RobotState(joint_state=JointState(
+                        name=names, position=[float(a) for a in v] + [grip]))
+                    res = self.wait_future(self.validity_cli.call_async(req), 5.0,
+                                           'check_state_validity')
+                    if not res.valid:
+                        pairs = sorted({f'{c.contact_body_1}-{c.contact_body_2}'
+                                        for c in res.contacts})
+                        margin = '' if v == list(q) else f' a {tol} rad de la pose'
+                        raise Failure(ERR_IK, f'la pose {name} choca (gripper {grip_name}{margin}): '
+                                              f'{", ".join(pairs) or "inválida"}')
+
+    def move_moveit(self, goal_handle, q_goal, scale, on_progress, linear):
+        """Planea y ejecuta con move_group hasta q_goal (meta en juntas)."""
+        g = lambda n: self.get_parameter(n).value  # noqa: E731
+        if not self.move_group.wait_for_server(timeout_sec=5.0):
+            raise Failure(ERR_MCU, 'sin move_group (acción move_action)')
+        s = max(0.05, min(1.0, scale or 1.0))
+        tol = float(g('goal_joint_tolerance'))
+        req = MotionPlanRequest(
+            group_name=g('planning_group'), num_planning_attempts=int(g('planning_attempts')),
+            allowed_planning_time=float(g('planning_time')),
+            max_velocity_scaling_factor=s, max_acceleration_scaling_factor=s)
+        if linear:
+            req.pipeline_id = 'pilz_industrial_motion_planner'
+            req.planner_id = g('linear_planner')
+        req.goal_constraints.append(Constraints(joint_constraints=[
+            JointConstraint(joint_name=j, position=float(v), tolerance_above=tol,
+                            tolerance_below=tol, weight=1.0)
+            for j, v in zip(self.joints, q_goal)]))
+        goal = MoveGroup.Goal(request=req)
+        goal.planning_options.plan_only = False
+        q0 = self.joints_now()
+        gh = self.wait_future(self.move_group.send_goal_async(goal), 10.0, 'move_group')
+        if not gh.accepted:
+            raise Failure(ERR_MCU, 'move_group rechazó la meta')
+        res = gh.get_result_async()
+        # Holgado: move_group vigila la ejecución; esto solo cubre que se caiga.
+        a_max = g('max_accel') * s
+        limit = (float(g('planning_time')) * int(g('planning_attempts')) +
+                 3.0 * traj.duration(q0, q_goal, a_max) + 30.0)
+        end = time.monotonic() + limit
+        while not res.done():
+            if goal_handle is not None and goal_handle.is_cancel_requested:
+                gh.cancel_goal_async()
+                self.hold()
+                raise Failure(ERR_CANCELED, 'cancelado')
+            if time.monotonic() > end:
+                gh.cancel_goal_async()
+                self.hold()
+                raise Failure(ERR_TIMEOUT, f'move_group no terminó en {limit:.0f} s')
+            q = self.joints_now()
+            if on_progress is not None and q is not None:
+                on_progress(q, traj.progress(q0, q_goal, q))
+            time.sleep(0.05)
+        code = res.result().result.error_code.val
+        if code != MoveItErrorCodes.SUCCESS:
+            what = 'LIN' if linear else 'OMPL'
+            raise Failure(MOVEIT_ERRORS.get(code, ERR_IK),
+                          f'MoveIt ({what}): {MOVEIT_NAMES.get(code, code)}')
 
     def ik_for(self, pose, pitch, seed=None):
         """PoseStamped -> juntas (posición del TCP + pitch)."""
@@ -333,12 +462,13 @@ class ArmServer(Node):
             q_pre = self.ik_for(pre, TOP_DOWN)
             q_at = self.ik_for(target, TOP_DOWN, seed=q_pre)
             q_lift = self.ik_for(lift, TOP_DOWN, seed=q_at)
+            self.check_states([('pregrasp', q_pre), ('grasp', q_at), ('lift', q_lift)])
             self.staged(goal_handle, PickObject.Feedback, [
                 ('open', lambda: self.gripper(p('gripper_open').value)),
                 ('pregrasp', lambda: self.move_joints(goal_handle, q_pre)),
-                ('descend', lambda: self.move_joints(goal_handle, q_at, 0.4)),
+                ('descend', lambda: self.move_joints(goal_handle, q_at, 0.4, linear=True)),
                 ('grasp', lambda: self.gripper(p('gripper_close').value, expect_grasp=True)),
-                ('lift', lambda: self.move_joints(goal_handle, q_lift, 0.4)),
+                ('lift', lambda: self.move_joints(goal_handle, q_lift, 0.4, linear=True)),
             ])
 
         return self.run(goal_handle, PickObject.Result(), body)
@@ -353,11 +483,12 @@ class ArmServer(Node):
             at = self.offset(target, p('place_clearance').value)
             q_above = self.ik_for(above, TOP_DOWN)
             q_at = self.ik_for(at, TOP_DOWN, seed=q_above)
+            self.check_states([('above', q_above), ('place', q_at)])
             self.staged(goal_handle, PlaceObject.Feedback, [
                 ('above', lambda: self.move_joints(goal_handle, q_above)),
-                ('descend', lambda: self.move_joints(goal_handle, q_at, 0.4)),
+                ('descend', lambda: self.move_joints(goal_handle, q_at, 0.4, linear=True)),
                 ('release', lambda: self.gripper(p('gripper_open').value)),
-                ('retreat', lambda: self.move_joints(goal_handle, q_above, 0.4)),
+                ('retreat', lambda: self.move_joints(goal_handle, q_above, 0.4, linear=True)),
             ])
 
         return self.run(goal_handle, PlaceObject.Result(), body)

@@ -1,0 +1,13 @@
+# Controladores para MoveIt (arm_controller.py). Juntas, límites y gripper_travel
+# vienen de amr_mqtt_bridge/config/arm.yaml (se cargan juntos en el launch).
+arm_controller:
+  ros__parameters:
+    max_accel: 1.5          # rad/s^2, igual que max_acceleration en joint_limits.yaml
+    min_accel: 0.05
+    path_tolerance: 0.02    # rad: desviación máx. respecto a la trayectoria de MoveIt
+    start_tolerance: 0.05   # rad
+    joint_tolerance: 0.02   # rad por vértice
+    goal_tolerance: 0.02    # rad al final
+    timeout_margin: 3.0     # s
+    gripper_max_current: 1.0  # A (ACS712) si GripperCommand.max_effort <= 0
+    gripper_timeout: 3.0

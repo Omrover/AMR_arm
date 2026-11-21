@@ -1,0 +1,97 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Semántica de MoveIt del Mobile Manipulator. Los nombres de links y juntas son
+  los de amr_description (también los que debe conservar el export de SolidWorks).
+  Poses: las mismas que amr_arm_control/config/arm_server.yaml (test/test_srdf.py).
+
+  La matriz de colisiones la genera scripts/update_collisions.sh (collisions_updater,
+  20000 muestras, sin GUI). Regenerarla cuando cambie la geometría, p. ej. al pasar
+  a las mallas del CAD. Ese script reescribe este archivo y borra este comentario.
+-->
+<robot name="omrover_mm">
+    <!--GROUPS: Representation of a set of joints and links. This can be useful for specifying DOF to plan for, defining arms, end effectors, etc-->
+    <!--LINKS: When a link is specified, the parent joint of that link (if it exists) is automatically included-->
+    <!--JOINTS: When a joint is specified, the child link of that joint (which will always exist) is automatically included-->
+    <!--CHAINS: When a chain is specified, all the links along the chain (including endpoints) are included in the group. Additionally, all the joints that are parents to included links are also included. This means that joints along the chain and the parent joint of the base link are included in the group-->
+    <!--SUBGROUPS: Groups can also be formed by referencing to already defined group names-->
+    <group name="arm">
+        <chain base_link="arm_base_link" tip_link="tool0"/>
+    </group>
+    <group name="gripper">
+        <link name="gripper_base_link"/>
+        <link name="gripper_finger_left_link"/>
+        <link name="gripper_finger_right_link"/>
+        <link name="gripper_tcp"/>
+    </group>
+    <!--GROUP STATES: Purpose: Define a named state for a particular group, in terms of joint values. This is useful to define states like 'folded arms'-->
+    <group_state name="zero" group="arm">
+        <joint name="arm_joint_1" value="0"/>
+        <joint name="arm_joint_2" value="0"/>
+        <joint name="arm_joint_3" value="0"/>
+        <joint name="arm_joint_4" value="0"/>
+    </group_state>
+    <group_state name="stow" group="arm">
+        <joint name="arm_joint_1" value="0"/>
+        <joint name="arm_joint_2" value="0.865"/>
+        <joint name="arm_joint_3" value="-0.651"/>
+        <joint name="arm_joint_4" value="1.357"/>
+    </group_state>
+    <group_state name="dock_view" group="arm">
+        <joint name="arm_joint_1" value="0"/>
+        <joint name="arm_joint_2" value="1.46"/>
+        <joint name="arm_joint_3" value="0.02"/>
+        <joint name="arm_joint_4" value="1.57"/>
+    </group_state>
+    <group_state name="scan" group="arm">
+        <joint name="arm_joint_1" value="3.14159"/>
+        <joint name="arm_joint_2" value="1.469"/>
+        <joint name="arm_joint_3" value="-0.965"/>
+        <joint name="arm_joint_4" value="0.295"/>
+    </group_state>
+    <group_state name="tray_above" group="arm">
+        <joint name="arm_joint_1" value="3.14159"/>
+        <joint name="arm_joint_2" value="0.06"/>
+        <joint name="arm_joint_3" value="-0.4"/>
+        <joint name="arm_joint_4" value="1.912"/>
+    </group_state>
+    <group_state name="open" group="gripper">
+        <joint name="gripper_finger_joint" value="0.035"/>
+    </group_state>
+    <group_state name="closed" group="gripper">
+        <joint name="gripper_finger_joint" value="0"/>
+    </group_state>
+    <!--END EFFECTOR: Purpose: Represent information about an end effector.-->
+    <end_effector name="gripper" parent_link="tool0" group="gripper" parent_group="arm"/>
+    <!--DISABLE COLLISIONS: By default it is assumed that any link of the robot could potentially come into collision with any other link in the robot. This tag disables collision checking between a specified pair of links. -->
+    <disable_collisions link1="arm_link_1" link2="arm_link_2" reason="Adjacent"/>
+    <disable_collisions link1="arm_link_1" link2="arm_link_3" reason="Never"/>
+    <disable_collisions link1="arm_link_1" link2="arm_link_4" reason="Never"/>
+    <disable_collisions link1="arm_link_1" link2="base_link" reason="Adjacent"/>
+    <disable_collisions link1="arm_link_1" link2="camera_link" reason="Never"/>
+    <disable_collisions link1="arm_link_1" link2="wheel_fl_link" reason="Never"/>
+    <disable_collisions link1="arm_link_1" link2="wheel_fr_link" reason="Never"/>
+    <disable_collisions link1="arm_link_1" link2="wheel_rl_link" reason="Never"/>
+    <disable_collisions link1="arm_link_1" link2="wheel_rr_link" reason="Never"/>
+    <disable_collisions link1="arm_link_2" link2="arm_link_3" reason="Adjacent"/>
+    <disable_collisions link1="arm_link_2" link2="camera_link" reason="Never"/>
+    <disable_collisions link1="arm_link_3" link2="arm_link_4" reason="Adjacent"/>
+    <disable_collisions link1="arm_link_3" link2="camera_link" reason="Never"/>
+    <disable_collisions link1="arm_link_3" link2="gripper_finger_left_link" reason="Never"/>
+    <disable_collisions link1="arm_link_3" link2="gripper_finger_right_link" reason="Never"/>
+    <disable_collisions link1="arm_link_4" link2="camera_link" reason="Adjacent"/>
+    <disable_collisions link1="arm_link_4" link2="gripper_finger_left_link" reason="Adjacent"/>
+    <disable_collisions link1="arm_link_4" link2="gripper_finger_right_link" reason="Adjacent"/>
+    <disable_collisions link1="base_link" link2="wheel_fl_link" reason="Adjacent"/>
+    <disable_collisions link1="base_link" link2="wheel_fr_link" reason="Adjacent"/>
+    <disable_collisions link1="base_link" link2="wheel_rl_link" reason="Adjacent"/>
+    <disable_collisions link1="base_link" link2="wheel_rr_link" reason="Adjacent"/>
+    <disable_collisions link1="camera_link" link2="gripper_finger_left_link" reason="Never"/>
+    <disable_collisions link1="camera_link" link2="gripper_finger_right_link" reason="Never"/>
+    <disable_collisions link1="gripper_finger_left_link" link2="gripper_finger_right_link" reason="Adjacent"/>
+    <disable_collisions link1="wheel_fl_link" link2="wheel_fr_link" reason="Never"/>
+    <disable_collisions link1="wheel_fl_link" link2="wheel_rl_link" reason="Never"/>
+    <disable_collisions link1="wheel_fl_link" link2="wheel_rr_link" reason="Never"/>
+    <disable_collisions link1="wheel_fr_link" link2="wheel_rl_link" reason="Never"/>
+    <disable_collisions link1="wheel_fr_link" link2="wheel_rr_link" reason="Never"/>
+    <disable_collisions link1="wheel_rl_link" link2="wheel_rr_link" reason="Never"/>
+</robot>

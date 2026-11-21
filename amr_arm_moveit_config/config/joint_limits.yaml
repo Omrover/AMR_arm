@@ -1,0 +1,37 @@
+# Límites para la parametrización temporal de MoveIt. Las posiciones vienen de
+# la URDF (params.xacro). max_acceleration = max_accel de arm_controller.yaml:
+# el controlador ejecuta cada tramo con perfil triangular hasta ese valor.
+default_velocity_scaling_factor: 0.3
+default_acceleration_scaling_factor: 0.3
+
+joint_limits:
+  arm_joint_1:
+    has_velocity_limits: true
+    max_velocity: 1.5
+    has_acceleration_limits: true
+    max_acceleration: 1.5
+  arm_joint_2:
+    has_velocity_limits: true
+    max_velocity: 1.5
+    has_acceleration_limits: true
+    max_acceleration: 1.5
+  arm_joint_3:
+    has_velocity_limits: true
+    max_velocity: 1.5
+    has_acceleration_limits: true
+    max_acceleration: 1.5
+  arm_joint_4:
+    has_velocity_limits: true
+    max_velocity: 1.5
+    has_acceleration_limits: true
+    max_acceleration: 1.5
+  gripper_finger_joint:
+    has_velocity_limits: true
+    max_velocity: 0.05
+    has_acceleration_limits: true
+    max_acceleration: 0.5
+  gripper_finger_right_joint:
+    has_velocity_limits: true
+    max_velocity: 0.05
+    has_acceleration_limits: true
+    max_acceleration: 0.5

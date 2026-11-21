@@ -23,6 +23,7 @@ setup(
     tests_require=['pytest'],
     entry_points={'console_scripts': [
         'arm_server = amr_arm_control.arm_server:main',
+        'arm_controller = amr_arm_control.arm_controller:main',
         'arm_check = amr_arm_control.arm_check:main',
     ]},
 )

@@ -1,0 +1,27 @@
+# Ejecución por acciones (sin ros2_control): amr_arm_control/arm_controller
+# traduce a llc/arm_command y llc/set_gripper del bridge (robot real, emulador
+# o gz_mcu en Gazebo).
+moveit_controller_manager: moveit_simple_controller_manager/MoveItSimpleControllerManager
+
+moveit_simple_controller_manager:
+  controller_names:
+    - arm_controller
+    - gripper_controller
+  arm_controller:
+    type: FollowJointTrajectory
+    action_ns: follow_joint_trajectory
+    default: true
+    joints: [arm_joint_1, arm_joint_2, arm_joint_3, arm_joint_4]
+  gripper_controller:
+    type: GripperCommand
+    action_ns: gripper_cmd
+    default: true
+    joints: [gripper_finger_joint]
+
+# arm_controller se detiene en cada vértice de la trayectoria (metas de
+# posición del GIM6010-8), así que tarda más que el plan de MoveIt.
+trajectory_execution:
+  allowed_execution_duration_scaling: 3.0
+  allowed_goal_duration_margin: 5.0
+  allowed_start_tolerance: 0.05
+  execution_duration_monitoring: true
