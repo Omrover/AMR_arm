@@ -57,6 +57,7 @@ TOP_DOWN = -math.pi / 2
 # Poses tentativas (rad) con todos los eslabones fuera del plano del LiDAR;
 # ajustarlas con la geometría real del CAD (config/arm_server.yaml).
 DEFAULT_POSES = {
+    'rest': [3.14159, -0.05, 0.058, 0.0],     # sentado en su tope (calibración)
     'stow': [0.0, 0.865, -0.651, 1.357],        # TCP sobre el centro, 0.30 m arriba
     'dock_view': [0.0, 1.46, 0.02, 1.57],       # cámara casi horizontal a 0.48 m (dock)
     'scan': [math.pi, 1.469, -0.965, 0.295],    # cámara 0.3 m adelante, 0.8 rad abajo

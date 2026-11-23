@@ -8,8 +8,12 @@ arm_server:
     joint_tolerance: 0.02     # rad
     # Poses tentativas: todos los eslabones fuera del plano del LiDAR. Ajustar
     # con la geometría real (CAD) y probar con el brazo en el aire.
-    pose_names: [stow, dock_view, scan, tray_above]
+    pose_names: [rest, stow, dock_view, scan, tray_above]
     poses:
+      # rest: el brazo sentado en su tope (pose de calibración, arm_ref_pose en
+      # arm.yaml). q2 = -0.05 queda 0.009 rad arriba de la referencia: ahí el link 2
+      # asienta sin que el motor empuje contra el tope. Estacionar aquí antes de apagar.
+      rest: [3.14159, -0.05, 0.058, 0.0]
       stow: [0.0, 0.865, -0.651, 1.357]
       # dock_view: cámara a 0.48 m del suelo con pitch -5°, todo el brazo detrás de
       # x = 0.20 m y sin autocolisión con margen de +-0.03 rad (MoveIt, eslabón 3 en L).
