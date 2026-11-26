@@ -15,12 +15,19 @@ arm_server:
       # asienta sin que el motor empuje contra el tope. Estacionar aquí antes de apagar.
       rest: [3.14159, -0.05, 0.058, 0.0]
       stow: [0.0, 0.865, -0.651, 1.357]
-      # dock_view: cámara a 0.48 m del suelo con pitch -5°, todo el brazo detrás de
-      # x = 0.20 m y sin autocolisión con margen de +-0.03 rad (MoveIt, eslabón 3 en L).
-      dock_view: [0.0, 1.46, 0.02, 1.57]
+      # dock_view: cámara a 0.50 m del suelo mirando al frente con pitch -5°, todo el
+      # brazo detrás de x = 0.20 m (eslabón 2 en su tope, codo abierto 0.15). Sin
+      # autocolisión con las mallas del CAD con margen de +-0.03 rad.
+      dock_view: [3.14159, -0.05, -0.15, 0.35]
       scan: [3.14159, 1.469, -0.965, 0.295]
-      tray_above: [3.14159, 0.06, -0.4, 1.912]   # rama q3 < 0 (el codo no cruza)
-    pregrasp_height: 0.08     # m sobre la pieza
+      # tray_above: TCP horizontal detrás del brazo a 0.60 m del piso. Con el gripper
+      # siempre horizontal la bandeja tiene que ir elevada (~0.55-0.6 m, reach_map).
+      tray_above: [0.0, 1.149, -0.211, -0.938]
+    # Agarre con el gripper siempre horizontal: pregrasp approach_distance antes de la
+    # pieza (sobre la radial desde la base del brazo), avance recto, cerrar, subir
+    # lift_height. Al dejar: arriba, bajar, soltar, retirarse approach_distance.
+    grasp_pitch: 0.0          # rad respecto a la horizontal
+    approach_distance: 0.08   # m
     lift_height: 0.12
     place_clearance: 0.01
     gripper_open: 0.0
