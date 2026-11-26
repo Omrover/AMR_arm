@@ -54,8 +54,8 @@ class ArmController(Node):
         super().__init__('arm_controller')
         d = self.declare_parameter
         d('arm_joints', ['arm_joint_1', 'arm_joint_2', 'arm_joint_3', 'arm_joint_4'])
-        d('arm_lower', [-math.pi, -math.pi / 2, -2.5, -2.5])
-        d('arm_upper', [math.pi, math.pi / 2, 0.1, 2.5])   # q3 <= 0.1: el codo no cruza el eslabón 2
+        d('arm_lower', [-math.pi, -0.06, -3.4907, -1.2217])   # CAD (convención DH)
+        d('arm_upper', [math.pi, 3.4907, 0.1, 1.5708])      # q3 <= 0.1: pose de calibración
         d('max_accel', 1.5)            # rad/s^2: tope por tramo (igual a joint_limits.yaml)
         d('min_accel', 0.05)
         d('path_tolerance', 0.02)      # rad: desviación máx. al simplificar la trayectoria
@@ -64,7 +64,7 @@ class ArmController(Node):
         d('goal_tolerance', 0.02)      # rad al final
         d('timeout_margin', 3.0)       # s sobre la duración estimada de cada tramo
         d('gripper_joint', 'gripper_finger_joint')
-        d('gripper_travel', 0.035)     # m por dedo: posición del joint con el gripper abierto
+        d('gripper_travel', 0.05)     # m por dedo: posición del joint con el gripper abierto
         d('gripper_max_current', 1.0)  # A si GripperCommand.max_effort <= 0
         d('gripper_timeout', 3.0)
         g = lambda n: self.get_parameter(n).value  # noqa: E731

@@ -53,15 +53,15 @@ MOVEIT_ERRORS = {getattr(MoveItErrorCodes, k): v for k, v in (
 ) if hasattr(MoveItErrorCodes, k)}
 STATUS_QOS = QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL,
                         reliability=ReliabilityPolicy.RELIABLE)
-TOP_DOWN = -math.pi / 2
-# Poses tentativas (rad) con todos los eslabones fuera del plano del LiDAR;
-# ajustarlas con la geometría real del CAD (config/arm_server.yaml).
+HORIZONTAL = 0.0   # el gripper siempre paralelo al piso (pitch 0 hacia la pieza)
+# Poses (rad, convención DH) con todos los eslabones fuera del plano del LiDAR;
+# las de config/arm_server.yaml tienen prioridad.
 DEFAULT_POSES = {
     'rest': [3.14159, -0.05, 0.058, 0.0],     # sentado en su tope (calibración)
     'stow': [0.0, 0.865, -0.651, 1.357],        # TCP sobre el centro, 0.30 m arriba
-    'dock_view': [0.0, 1.46, 0.02, 1.57],       # cámara casi horizontal a 0.48 m (dock)
+    'dock_view': [3.14159, -0.05, -0.15, 0.35],  # cámara al frente, -5°, a 0.50 m (dock)
     'scan': [math.pi, 1.469, -0.965, 0.295],    # cámara 0.3 m adelante, 0.8 rad abajo
-    'tray_above': [math.pi, 0.06, -0.4, 1.912],    # TCP 0.15 m sobre la bandeja
+    'tray_above': [0.0, 1.149, -0.211, -0.938],    # TCP horizontal detrás, 0.60 m del piso
 }
 
 
@@ -85,15 +85,16 @@ class ArmServer(Node):
         super().__init__('arm_server')
         d = self.declare_parameter
         d('arm_joints', ['arm_joint_1', 'arm_joint_2', 'arm_joint_3', 'arm_joint_4'])
-        d('arm_lower', [-math.pi, -math.pi / 2, -2.5, -2.5])
-        d('arm_upper', [math.pi, math.pi / 2, 0.1, 2.5])   # q3 <= 0.1: el codo no cruza el eslabón 2
+        d('arm_lower', [-math.pi, -0.06, -3.4907, -1.2217])   # CAD (convención DH)
+        d('arm_upper', [math.pi, 3.4907, 0.1, 1.5708])      # q3 <= 0.1: pose de calibración
         d('base_frame', 'arm_base_link')
         d('tray_frame', 'tray_link')
         d('max_accel', 1.5)              # rad/s^2 con velocity_scale = 1
         d('joint_tolerance', 0.02)       # rad
         d('timeout_margin', 5.0)         # s sobre la duración estimada
         d('pose_names', list(DEFAULT_POSES))
-        d('pregrasp_height', 0.08)       # m sobre la pieza
+        d('grasp_pitch', HORIZONTAL)     # rad respecto a la horizontal hacia la pieza
+        d('approach_distance', 0.08)     # m: pregrasp antes de la pieza sobre la radial
         d('lift_height', 0.12)
         d('place_clearance', 0.01)       # m sobre la superficie al soltar
         d('gripper_open', 0.0)
@@ -107,8 +108,9 @@ class ArmServer(Node):
         d('planning_attempts', 3)
         d('goal_joint_tolerance', 0.005)  # rad en la meta de MoveIt
         d('linear_planner', 'LIN')       # Pilz: bajadas y subidas rectas
+        d('park_unfold', 0.35)           # rad de codo para despegar el eslabón 4 del 2 (rest)
         d('gripper_joint', 'gripper_finger_joint')   # arm.yaml
-        d('gripper_travel', 0.035)       # m: el joint con el gripper abierto (arm.yaml)
+        d('gripper_travel', 0.05)       # m: el joint con el gripper abierto (arm.yaml)
         g = lambda n: self.get_parameter(n).value  # noqa: E731
         self.joints = list(g('arm_joints'))
         self.lower, self.upper = list(g('arm_lower')), list(g('arm_upper'))
@@ -217,8 +219,56 @@ class ArmServer(Node):
             raise Failure(ERR_MCU, 'sin /joint_states del brazo')
         self.ensure_enabled()
         if self.get_parameter('use_moveit').value:
+            self.move_via_moveit(goal_handle, q_goal, scale, on_progress, linear)
+            return
+        self.move_direct(goal_handle, q_goal, scale, on_progress)
+
+    def state_valid(self, q):
+        """(válida, pares en contacto) según move_group, con el gripper cerrado."""
+        g = lambda n: self.get_parameter(n).value  # noqa: E731
+        if not self.validity_cli.wait_for_service(timeout_sec=5.0):
+            raise Failure(ERR_MCU, 'sin move_group (servicio check_state_validity)')
+        req = GetStateValidity.Request(group_name=g('planning_group'))
+        req.robot_state = RobotState(joint_state=JointState(
+            name=self.joints + [g('gripper_joint')], position=[float(a) for a in q] + [0.0]))
+        res = self.wait_future(self.validity_cli.call_async(req), 5.0, 'check_state_validity')
+        return res.valid, sorted({f'{c.contact_body_1}-{c.contact_body_2}' for c in res.contacts})
+
+    def unfolded(self, q):
+        """q con el codo abierto park_unfold rad: despega el eslabón 4 del 2."""
+        out = list(q)
+        out[2] = max(self.lower[2], q[2] - float(self.get_parameter('park_unfold').value))
+        return out
+
+    def move_via_moveit(self, goal_handle, q_goal, scale, on_progress, linear):
+        """MoveIt no planea desde ni hacia un estado en colisión. En rest (el tope de
+        calibración) el eslabón 4 descansa sobre el 2: se sale abriendo solo el codo
+        con un movimiento directo y se llega planeando hasta el codo abierto y
+        cerrándolo directo al final. Cualquier otra colisión sigue siendo error."""
+        q0 = self.joints_now()
+        ok, pairs = self.state_valid(q0)
+        if not ok:
+            q_out = self.unfolded(q0)
+            if not self.state_valid(q_out)[0]:
+                raise Failure(ERR_LIMITS, f'el brazo está en colisión ({", ".join(pairs)}) y '
+                                          'abrir el codo no lo libera: moverlo a mano')
+            self.get_logger().info(f'saliendo de una pose en contacto ({", ".join(pairs)}): '
+                                   'abro el codo sin MoveIt')
+            self.move_direct(goal_handle, q_out, 0.3)
+        ok, pairs = self.state_valid(q_goal)
+        if ok:
             self.move_moveit(goal_handle, q_goal, scale, on_progress, linear)
             return
+        q_pre = self.unfolded(q_goal)
+        if linear or not self.state_valid(q_pre)[0]:
+            raise Failure(ERR_IK, f'la meta choca: {", ".join(pairs)}')
+        self.move_moveit(goal_handle, q_pre, scale, on_progress, False)
+        self.get_logger().info(f'último tramo a una pose en contacto ({", ".join(pairs)}) '
+                               'sin MoveIt: cierro el codo')
+        self.move_direct(goal_handle, q_goal, 0.3, on_progress)
+
+    def move_direct(self, goal_handle, q_goal, scale=1.0, on_progress=None):
+        """Punto a punto por el bridge (sin revisar colisiones)."""
         q0 = self.joints_now()
         a_max = self.get_parameter('max_accel').value * max(0.05, min(1.0, scale or 1.0))
         res = self.call(self.arm_cli, ArmCommand.Request(
@@ -338,8 +388,8 @@ class ArmServer(Node):
             raise Failure(MOVEIT_ERRORS.get(code, ERR_IK),
                           f'MoveIt ({what}): {MOVEIT_NAMES.get(code, code)}')
 
-    def ik_for(self, pose, pitch, seed=None):
-        """PoseStamped -> juntas (posición del TCP + pitch)."""
+    def point_in_base(self, pose):
+        """PoseStamped -> [x, y, z] en base_frame (arm_base_link)."""
         frame = self.get_parameter('base_frame').value
         p = pose.pose.position
         point = [p.x, p.y, p.z]
@@ -351,21 +401,26 @@ class ArmServer(Node):
             r, t = tf.transform.rotation, tf.transform.translation
             point = rotate((r.x, r.y, r.z, r.w), point)
             point = [point[0] + t.x, point[1] + t.y, point[2] + t.z]
+        return point
+
+    def ik_for(self, pose, pitch, seed=None):
+        """PoseStamped o [x, y, z] en base_frame -> juntas (posición del TCP + pitch)."""
+        point = list(pose) if isinstance(pose, (list, tuple)) else self.point_in_base(pose)
         q = kin.ik(*point, pitch, self.lower, self.upper, seed=seed or self.joints_now())
         if q is None:
             raise Failure(ERR_IK, f'sin solución IK para {[round(v, 3) for v in point]} '
                                   f'con pitch {pitch:.2f}')
         return q
 
-    def offset(self, pose, dz):
-        """Copia de la pose desplazada dz en z de su propio frame."""
-        out = type(pose)()
-        out.header = pose.header
-        out.pose.position.x = pose.pose.position.x
-        out.pose.position.y = pose.pose.position.y
-        out.pose.position.z = pose.pose.position.z + dz
-        out.pose.orientation = pose.pose.orientation
-        return out
+    @staticmethod
+    def grasp_points(point, approach, up):
+        """Con el gripper horizontal: (punto approach m antes sobre la radial desde la
+        base del brazo, punto up m arriba). Todo en base_frame."""
+        r = math.hypot(point[0], point[1])
+        ux, uy = (point[0] / r, point[1] / r) if r > 1e-6 else (1.0, 0.0)
+        before = [point[0] - approach * ux, point[1] - approach * uy, point[2]]
+        above = [point[0], point[1], point[2] + up]
+        return before, above
 
     def gripper(self, position, expect_grasp=False):
         g = self.get_parameter
@@ -451,23 +506,26 @@ class ArmServer(Node):
             fn()
 
     def exec_pick(self, goal_handle):
+        """Gripper horizontal: pregrasp antes de la pieza, avance recto, agarre, subir."""
         g = goal_handle.request
         p = self.get_parameter
 
         def body():
             target = self.tray_pose() if g.source == PickObject.Goal.FROM_TRAY else g.object_pose
-            pre = self.offset(target, p('pregrasp_height').value)
-            lift = self.offset(target, p('lift_height').value)
-            # Las tres poses se resuelven antes de mover: si alguna no tiene IK,
-            # el brazo ni siquiera arranca.
-            q_pre = self.ik_for(pre, TOP_DOWN)
-            q_at = self.ik_for(target, TOP_DOWN, seed=q_pre)
-            q_lift = self.ik_for(lift, TOP_DOWN, seed=q_at)
+            pitch = p('grasp_pitch').value
+            at = self.point_in_base(target)
+            pre, lift = self.grasp_points(at, p('approach_distance').value,
+                                          p('lift_height').value)
+            # Las tres poses se resuelven antes de mover (y en la misma rama de la IK):
+            # si alguna no tiene solución, el brazo ni siquiera arranca.
+            q_pre = self.ik_for(pre, pitch)
+            q_at = self.ik_for(at, pitch, seed=q_pre)
+            q_lift = self.ik_for(lift, pitch, seed=q_at)
             self.check_states([('pregrasp', q_pre), ('grasp', q_at), ('lift', q_lift)])
             self.staged(goal_handle, PickObject.Feedback, [
                 ('open', lambda: self.gripper(p('gripper_open').value)),
                 ('pregrasp', lambda: self.move_joints(goal_handle, q_pre)),
-                ('descend', lambda: self.move_joints(goal_handle, q_at, 0.4, linear=True)),
+                ('approach', lambda: self.move_joints(goal_handle, q_at, 0.4, linear=True)),
                 ('grasp', lambda: self.gripper(p('gripper_close').value, expect_grasp=True)),
                 ('lift', lambda: self.move_joints(goal_handle, q_lift, 0.4, linear=True)),
             ])
@@ -475,21 +533,27 @@ class ArmServer(Node):
         return self.run(goal_handle, PickObject.Result(), body)
 
     def exec_place(self, goal_handle):
+        """Gripper horizontal: llegar arriba del punto, bajar, soltar y retirarse hacia
+        atrás sobre la radial (sin arrastrar la pieza)."""
         g = goal_handle.request
         p = self.get_parameter
 
         def body():
             target = self.tray_pose() if g.target == PlaceObject.Goal.TO_TRAY else g.place_pose
-            above = self.offset(target, p('pregrasp_height').value)
-            at = self.offset(target, p('place_clearance').value)
-            q_above = self.ik_for(above, TOP_DOWN)
-            q_at = self.ik_for(at, TOP_DOWN, seed=q_above)
-            self.check_states([('above', q_above), ('place', q_at)])
+            pitch = p('grasp_pitch').value
+            at = self.point_in_base(target)
+            at[2] += p('place_clearance').value
+            retreat, above = self.grasp_points(at, p('approach_distance').value,
+                                               p('lift_height').value)
+            q_above = self.ik_for(above, pitch)
+            q_at = self.ik_for(at, pitch, seed=q_above)
+            q_retreat = self.ik_for(retreat, pitch, seed=q_at)
+            self.check_states([('above', q_above), ('place', q_at), ('retreat', q_retreat)])
             self.staged(goal_handle, PlaceObject.Feedback, [
                 ('above', lambda: self.move_joints(goal_handle, q_above)),
                 ('descend', lambda: self.move_joints(goal_handle, q_at, 0.4, linear=True)),
                 ('release', lambda: self.gripper(p('gripper_open').value)),
-                ('retreat', lambda: self.move_joints(goal_handle, q_above, 0.4, linear=True)),
+                ('retreat', lambda: self.move_joints(goal_handle, q_retreat, 0.4, linear=True)),
             ])
 
         return self.run(goal_handle, PlaceObject.Result(), body)
