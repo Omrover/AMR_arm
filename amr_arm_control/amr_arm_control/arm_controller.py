@@ -54,8 +54,8 @@ class ArmController(Node):
         super().__init__('arm_controller')
         d = self.declare_parameter
         d('arm_joints', ['arm_joint_1', 'arm_joint_2', 'arm_joint_3', 'arm_joint_4'])
-        d('arm_lower', [-math.pi, -0.06, -3.4907, -1.2217])   # CAD (convención DH)
-        d('arm_upper', [math.pi, 3.4907, 0.1, 1.5708])      # q3 <= 0.1: pose de calibración
+        d('arm_lower', [0.0, -0.06, -3.4907, -1.2217])   # CAD (convención DH)
+        d('arm_upper', [2 * math.pi, 3.4907, 0.1, 1.5708])      # q3 <= 0.1: pose de calibración
         d('max_accel', 1.5)            # rad/s^2: tope por tramo (igual a joint_limits.yaml)
         d('min_accel', 0.05)
         d('path_tolerance', 0.02)      # rad: desviación máx. al simplificar la trayectoria

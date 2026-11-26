@@ -10,8 +10,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from amr_arm_control import kinematics as k  # noqa: E402
 from amr_arm_control import trajectory as tr  # noqa: E402
 
-LOWER = [-math.pi, -0.06, -3.4907, -1.2217]   # arm.yaml / params.xacro (CAD)
-UPPER = [math.pi, 3.4907, 0.1, 1.5708]
+LOWER = [0.0, -0.06, -3.4907, -1.2217]   # arm.yaml / params.xacro (CAD)
+UPPER = [2 * math.pi, 3.4907, 0.1, 1.5708]
 CAD_URDF = os.path.join(os.path.dirname(__file__), '..', '..', 'models', 'urdf',
                         'Brazo_4GDL_URDF_v4.urdf')
 
@@ -73,6 +73,16 @@ def test_horizontal_grasp_in_front_of_robot():
     assert q[1] > math.pi / 2
     assert k.approach_pitch(q) == pytest.approx(0.0, abs=1e-9)
     assert all(lo - 1e-9 <= v <= hi + 1e-9 for v, lo, hi in zip(q, LOWER, UPPER))
+
+
+def test_over_branch_has_tray_above_shape():
+    # Pieza al frente sobre una mesa: la rama 'over' (la de arm_server) pone la junta 1
+    # al lado contrario (q1 = pi) y el brazo por encima, como tray_above.
+    q = k.ik(0.50, 0.0, 0.3645, 0.0, LOWER, UPPER, seed=[math.pi, 1.149, -0.211, -0.938],
+             branch='over')
+    assert q is not None and q[0] == pytest.approx(math.pi)
+    assert q[1] > math.pi / 2 and q[2] < 0 and q[3] < 0
+    assert k.ik(0.50, 0.0, 0.3645, 0.0, LOWER, UPPER, branch='direct') is None
 
 
 def test_limits_beyond_pi():

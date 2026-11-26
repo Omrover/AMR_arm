@@ -22,8 +22,8 @@ import numpy as np
 
 from amr_arm_control import kinematics as kin
 
-LOWER = [-math.pi, -0.06, -3.4907, -1.2217]      # arm.yaml / params.xacro (CAD)
-UPPER = [math.pi, 3.4907, 0.1, 1.5708]
+LOWER = [0.0, -0.06, -3.4907, -1.2217]      # arm.yaml / params.xacro (CAD)
+UPPER = [2 * math.pi, 3.4907, 0.1, 1.5708]
 # Semillas para que la IK pruebe codo arriba y codo abajo, al frente y por encima.
 SEEDS = ([0.0, 0.6, -1.6, 0.0], [0.0, 0.1, -0.6, 0.0], [0.0, 1.2, -2.2, 0.0],
          [math.pi, 2.5, -0.5, 0.0], [math.pi, 1.6, -0.3, -1.0])
@@ -50,6 +50,7 @@ class Robot:
 
     def __init__(self, a):
         self.mx, self.mz = a.mount_x, a.mount_z
+        self.branch = getattr(a, 'branch', None) or None
         self.lower = getattr(a, 'lower', None) or LOWER
         self.upper = getattr(a, 'upper', None) or UPPER
         r = a.clearance
@@ -87,7 +88,7 @@ class Robot:
         u, z = x_floor - self.mx, z_floor - self.mz
         found = None
         for seed in SEEDS:
-            q = kin.ik(u, 0.0, z, pitch, self.lower, self.upper, seed=seed)
+            q = kin.ik(u, 0.0, z, pitch, self.lower, self.upper, seed=seed, branch=self.branch)
             if q is None:
                 continue
             if not self.collides(q):
@@ -220,6 +221,8 @@ def main(argv=None):
     ap.add_argument('--lower', type=float, nargs=4, default=None,
                     help='límites inferiores q1..q4 [rad] (por defecto los del CAD)')
     ap.add_argument('--upper', type=float, nargs=4, default=None)
+    ap.add_argument('--branch', choices=['over', 'direct'], default=None,
+                    help="rama de la IK: 'over' = forma de tray_above (como arm_server)")
     ap.add_argument('--lidar-x', type=float, default=0.3045,
                     help='centro de la torre del LiDAR (CAD: x 0.264..0.345)')
     ap.add_argument('--lidar-top', type=float, default=0.29)

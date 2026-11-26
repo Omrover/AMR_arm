@@ -1,8 +1,13 @@
-# IK del brazo de 4 GDL con pick_ik. Con 4 GDL solo son alcanzables las
-# orientaciones con el eje de aproximación en el plano vertical que pasa por la
-# junta 1 (yaw = atan2(y, x)) y roll fijo: una meta 6D arbitraria no tiene
-# solución exacta. rotation_scale < 1 prioriza la posición; en RViz activar
-# "Approx IK Solutions" para arrastrar el marcador libremente.
+# IK del brazo de 4 GDL con pick_ik, para metas en pose (el marcador de RViz).
+# Con 4 GDL la herramienta solo apunta dentro del plano vertical que pasa por la
+# junta 1: al mover el marcador de lado, q1 gira y cambia el yaw, así que una
+# meta que conserve la orientación original no tiene solución (NO_IK_SOLUTION).
+# Por eso la IK es solo de posición (rotation_scale 0): el fantasma sigue al
+# marcador en cualquier dirección y minimal_displacement_weight lo mantiene cerca
+# de la pose actual. Medido (2026-11-26): con rotation_scale 0.5 fallaba todo
+# desplazamiento lateral; así resuelve casi todos.
+# arm_server NO usa esto: pick/place usan la IK analítica (kinematics.py) con el
+# gripper horizontal y mandan metas en juntas.
 arm:
   kinematics_solver: pick_ik/PickIkPlugin
   kinematics_solver_timeout: 0.05
@@ -10,9 +15,9 @@ arm:
   mode: global
   stop_optimization_on_valid_solution: true
   position_scale: 1.0
-  rotation_scale: 0.5
+  rotation_scale: 0.0
   position_threshold: 0.001
   orientation_threshold: 0.01
   cost_threshold: 0.001
-  minimal_displacement_weight: 0.0
+  minimal_displacement_weight: 0.001
   gd_step_size: 0.0001

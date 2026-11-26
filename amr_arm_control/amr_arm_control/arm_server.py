@@ -85,8 +85,8 @@ class ArmServer(Node):
         super().__init__('arm_server')
         d = self.declare_parameter
         d('arm_joints', ['arm_joint_1', 'arm_joint_2', 'arm_joint_3', 'arm_joint_4'])
-        d('arm_lower', [-math.pi, -0.06, -3.4907, -1.2217])   # CAD (convención DH)
-        d('arm_upper', [math.pi, 3.4907, 0.1, 1.5708])      # q3 <= 0.1: pose de calibración
+        d('arm_lower', [0.0, -0.06, -3.4907, -1.2217])   # CAD (convención DH)
+        d('arm_upper', [2 * math.pi, 3.4907, 0.1, 1.5708])      # q3 <= 0.1: pose de calibración
         d('base_frame', 'arm_base_link')
         d('tray_frame', 'tray_link')
         d('max_accel', 1.5)              # rad/s^2 con velocity_scale = 1
@@ -95,6 +95,11 @@ class ArmServer(Node):
         d('pose_names', list(DEFAULT_POSES))
         d('grasp_pitch', HORIZONTAL)     # rad respecto a la horizontal hacia la pieza
         d('approach_distance', 0.08)     # m: pregrasp antes de la pieza sobre la radial
+        # Forma del brazo al tomar y dejar (q2, q3, q4 de tray_above): la junta 1 apunta
+        # al lado contrario de la pieza y el brazo pasa por encima con el codo arriba.
+        # grasp_branch: 'over' (esa forma), 'direct' o '' (la más cercana a la actual).
+        d('grasp_branch', 'over')
+        d('grasp_shape', [1.149, -0.211, -0.938])
         d('lift_height', 0.12)
         d('place_clearance', 0.01)       # m sobre la superficie al soltar
         d('gripper_open', 0.0)
@@ -403,14 +408,25 @@ class ArmServer(Node):
             point = [point[0] + t.x, point[1] + t.y, point[2] + t.z]
         return point
 
-    def ik_for(self, pose, pitch, seed=None):
+    def ik_for(self, pose, pitch, seed=None, branch=None):
         """PoseStamped o [x, y, z] en base_frame -> juntas (posición del TCP + pitch)."""
         point = list(pose) if isinstance(pose, (list, tuple)) else self.point_in_base(pose)
-        q = kin.ik(*point, pitch, self.lower, self.upper, seed=seed or self.joints_now())
+        q = kin.ik(*point, pitch, self.lower, self.upper, seed=seed or self.joints_now(),
+                   branch=branch or None)
         if q is None:
             raise Failure(ERR_IK, f'sin solución IK para {[round(v, 3) for v in point]} '
                                   f'con pitch {pitch:.2f}')
         return q
+
+    def grasp_seed(self, point):
+        """Semilla con la forma grasp_shape girada hacia la pieza (rama 'over': q1
+        apunta al lado contrario de la pieza)."""
+        shape = [float(v) for v in self.get_parameter('grasp_shape').value]
+        q1 = math.atan2(point[1], point[0])
+        if self.get_parameter('grasp_branch').value != 'direct':
+            q1 += math.pi
+        q1 = q1 % (2.0 * math.pi)
+        return [q1] + shape
 
     @staticmethod
     def grasp_points(point, approach, up):
@@ -518,9 +534,10 @@ class ArmServer(Node):
                                           p('lift_height').value)
             # Las tres poses se resuelven antes de mover (y en la misma rama de la IK):
             # si alguna no tiene solución, el brazo ni siquiera arranca.
-            q_pre = self.ik_for(pre, pitch)
-            q_at = self.ik_for(at, pitch, seed=q_pre)
-            q_lift = self.ik_for(lift, pitch, seed=q_at)
+            br = p('grasp_branch').value
+            q_pre = self.ik_for(pre, pitch, seed=self.grasp_seed(at), branch=br)
+            q_at = self.ik_for(at, pitch, seed=q_pre, branch=br)
+            q_lift = self.ik_for(lift, pitch, seed=q_at, branch=br)
             self.check_states([('pregrasp', q_pre), ('grasp', q_at), ('lift', q_lift)])
             self.staged(goal_handle, PickObject.Feedback, [
                 ('open', lambda: self.gripper(p('gripper_open').value)),
@@ -545,9 +562,10 @@ class ArmServer(Node):
             at[2] += p('place_clearance').value
             retreat, above = self.grasp_points(at, p('approach_distance').value,
                                                p('lift_height').value)
-            q_above = self.ik_for(above, pitch)
-            q_at = self.ik_for(at, pitch, seed=q_above)
-            q_retreat = self.ik_for(retreat, pitch, seed=q_at)
+            br = p('grasp_branch').value
+            q_above = self.ik_for(above, pitch, seed=self.grasp_seed(at), branch=br)
+            q_at = self.ik_for(at, pitch, seed=q_above, branch=br)
+            q_retreat = self.ik_for(retreat, pitch, seed=q_at, branch=br)
             self.check_states([('above', q_above), ('place', q_at), ('retreat', q_retreat)])
             self.staged(goal_handle, PlaceObject.Feedback, [
                 ('above', lambda: self.move_joints(goal_handle, q_above)),

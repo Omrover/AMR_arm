@@ -29,8 +29,8 @@ def test_table_pick_with_elbow_over_the_piece():
 
 def test_q4_limit_is_what_blocks_low_tables():
     relaxed = argparse.Namespace(**vars(GEOM))
-    relaxed.lower = [-math.pi, -0.06, -3.4907, -2.5]
-    relaxed.upper = [math.pi, 3.4907, 0.1, 2.5]
+    relaxed.lower = [0.0, -0.06, -3.4907, -2.5]
+    relaxed.upper = [2 * math.pi, 3.4907, 0.1, 2.5]
     cad, wide = rm.Robot(GEOM), rm.Robot(relaxed)
     for r in (cad, wide):
         r.set_table(EDGE, 0.40)

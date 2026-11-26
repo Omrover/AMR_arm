@@ -97,19 +97,24 @@ def _fit(v, lo, hi, ref):
     return best
 
 
-def ik(x, y, z, pitch, lower, upper, seed=None, tcp_offset=TCP_OFFSET):
+def ik(x, y, z, pitch, lower, upper, seed=None, tcp_offset=TCP_OFFSET, branch=None):
     """Juntas que llevan el TCP a (x, y, z) en arm_base_link con el pitch dado
     (respecto a la horizontal de la base hacia el objetivo; ver approach_pitch).
 
-    Prueba q1 hacia el objetivo y q1 + pi (alcanzar por encima/detrás), codo arriba y
-    abajo; devuelve la solución dentro de límites más cercana a seed, o None.
+    Prueba q1 hacia el objetivo ('direct') y q1 + pi ('over': la junta 1 apunta al
+    lado contrario y el brazo pasa por encima, como tray_above), codo arriba y abajo;
+    devuelve la solución dentro de límites más cercana a seed, o None. branch
+    restringe a una de las dos ramas.
     """
     seed = list(seed) if seed is not None else [0.0, 0.0, 0.0, 0.0]
     along = TOOL0_ALONG + tcp_offset
     r = math.hypot(x, y)
     base = math.atan2(y, x) if r > 1e-9 else seed[0]
     best, best_cost = None, math.inf
-    for q1, u, psi in ((base, r, pitch), (base + math.pi, -r, math.pi - pitch)):
+    options = {'direct': (base, r, pitch), 'over': (base + math.pi, -r, math.pi - pitch)}
+    for name, (q1, u, psi) in options.items():
+        if branch is not None and name != branch:
+            continue
         # Muñeca: el TCP menos la herramienta (a lo largo y perpendicular al pitch).
         c, s = math.cos(psi), math.sin(psi)
         wu = u - along * c + TOOL0_PERP * s

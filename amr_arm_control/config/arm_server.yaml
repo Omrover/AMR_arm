@@ -28,6 +28,10 @@ arm_server:
     # lift_height. Al dejar: arriba, bajar, soltar, retirarse approach_distance.
     grasp_pitch: 0.0          # rad respecto a la horizontal
     approach_distance: 0.08   # m
+    # Forma del brazo al tomar/dejar = la de tray_above (q2, q3, q4): junta 1 hacia el
+    # lado contrario de la pieza, brazo por encima, codo arriba. '' = sin preferencia.
+    grasp_branch: over
+    grasp_shape: [1.149, -0.211, -0.938]
     lift_height: 0.12
     place_clearance: 0.01
     gripper_open: 0.0
