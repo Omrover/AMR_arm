@@ -59,9 +59,9 @@ HORIZONTAL = 0.0   # el gripper siempre paralelo al piso (pitch 0 hacia la pieza
 DEFAULT_POSES = {
     'rest': [3.14159, -0.05, 0.058, 0.0],     # sentado en su tope (calibración)
     'stow': [0.0, 0.865, -0.651, 1.357],        # TCP sobre el centro, 0.30 m arriba
-    'dock_view': [3.14159, -0.05, -0.15, 0.35],  # cámara al frente, -5°, a 0.50 m (dock)
+    'dock_view': [3.14159, -0.05, -0.15, 0.35],  # cámara al frente, -5°, a 0.44 m (dock)
     'scan': [math.pi, 1.469, -0.965, 0.295],    # cámara 0.3 m adelante, 0.8 rad abajo
-    'tray_above': [0.0, 1.149, -0.211, -0.938],    # TCP horizontal detrás, 0.60 m del piso
+    'tray_above': [0.0, 1.149, -0.211, -0.938],    # TCP horizontal detrás, 0.53 m del piso
 }
 
 

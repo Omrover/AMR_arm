@@ -211,9 +211,9 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split('\n')[0])
     ap.add_argument('--pitch', type=float, nargs='+', default=[0.0, -90.0],
                     help='grados respecto a la horizontal (0 = paralelo al piso, -90 = hacia abajo)')
-    ap.add_argument('--mount-x', type=float, default=0.14, help='arm_base_link en x [m] (TBD)')
-    ap.add_argument('--mount-z', type=float, default=0.198 + 0.0675,
-                    help='arm_base_link (base_link del CAD) desde el piso [m]')
+    ap.add_argument('--mount-x', type=float, default=0.1394, help='arm_base_link en x [m] (CAD)')
+    ap.add_argument('--mount-z', type=float, default=0.196,
+                    help='arm_base_link (cara inferior de la placa, sobre el techo) desde el piso [m]')
     ap.add_argument('--front', type=float, default=0.26, help='frente del chasis [m] (CAD)')
     ap.add_argument('--back', type=float, default=0.33, help='parte trasera del chasis [m]')
     ap.add_argument('--top', type=float, default=0.20,
