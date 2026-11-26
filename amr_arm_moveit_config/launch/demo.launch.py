@@ -3,9 +3,8 @@
     ros2 launch amr_arm_moveit_config demo.launch.py
 
 Usa el broker local de emulator.launch.py (127.0.0.1:18883): no correrlo a la
-vez que el bridge del robot real. El emulador arranca con el brazo en q = 0,
-que con la geometría provisional está en colisión (MoveIt no planea desde ahí):
-al iniciar se habilita y se lleva a stow directo por llc/arm_command.
+vez que el bridge del robot real. El emulador arranca con el brazo en q = 0; al
+iniciar se habilita y se lleva a stow directo por llc/arm_command.
 """
 from launch import LaunchDescription
 from launch.actions import (DeclareLaunchArgument, ExecuteProcess, IncludeLaunchDescription,
