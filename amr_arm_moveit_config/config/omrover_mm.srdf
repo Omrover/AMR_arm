@@ -43,10 +43,10 @@
         <joint name="arm_joint_4" value="1.357"/>
     </group_state>
     <group_state name="dock_view" group="arm">
-        <joint name="arm_joint_1" value="0"/>
-        <joint name="arm_joint_2" value="1.46"/>
-        <joint name="arm_joint_3" value="0.02"/>
-        <joint name="arm_joint_4" value="1.57"/>
+        <joint name="arm_joint_1" value="3.14159"/>
+        <joint name="arm_joint_2" value="-0.05"/>
+        <joint name="arm_joint_3" value="-0.15"/>
+        <joint name="arm_joint_4" value="0.35"/>
     </group_state>
     <group_state name="scan" group="arm">
         <joint name="arm_joint_1" value="3.14159"/>
@@ -55,13 +55,13 @@
         <joint name="arm_joint_4" value="0.295"/>
     </group_state>
     <group_state name="tray_above" group="arm">
-        <joint name="arm_joint_1" value="3.14159"/>
-        <joint name="arm_joint_2" value="0.06"/>
-        <joint name="arm_joint_3" value="-0.4"/>
-        <joint name="arm_joint_4" value="1.912"/>
+        <joint name="arm_joint_1" value="0"/>
+        <joint name="arm_joint_2" value="1.149"/>
+        <joint name="arm_joint_3" value="-0.211"/>
+        <joint name="arm_joint_4" value="-0.938"/>
     </group_state>
     <group_state name="open" group="gripper">
-        <joint name="gripper_finger_joint" value="0.035"/>
+        <joint name="gripper_finger_joint" value="0.05"/>
     </group_state>
     <group_state name="closed" group="gripper">
         <joint name="gripper_finger_joint" value="0"/>
@@ -69,30 +69,29 @@
     <!--END EFFECTOR: Purpose: Represent information about an end effector.-->
     <end_effector name="gripper" parent_link="tool0" group="gripper" parent_group="arm"/>
     <!--DISABLE COLLISIONS: By default it is assumed that any link of the robot could potentially come into collision with any other link in the robot. This tag disables collision checking between a specified pair of links. -->
+    <!-- Mallas del CAD (2026-11-26): la base del brazo va montada sobre base_link y la
+         cámara sobre arm_link_4. arm_link_1-arm_link_4 ya NO es "Never" (choca en ~2 % de
+         las poses con las mallas reales). Regenerar con scripts/update_collisions.sh. -->
+    <disable_collisions link1="arm_base_link" link2="base_link" reason="Adjacent"/>
+    <disable_collisions link1="arm_base_link" link2="arm_link_1" reason="Adjacent"/>
+    <disable_collisions link1="arm_link_4" link2="camera_mount_link" reason="Adjacent"/>
     <disable_collisions link1="arm_link_1" link2="arm_link_2" reason="Adjacent"/>
     <disable_collisions link1="arm_link_1" link2="arm_link_3" reason="Never"/>
-    <disable_collisions link1="arm_link_1" link2="arm_link_4" reason="Never"/>
     <disable_collisions link1="arm_link_1" link2="base_link" reason="Adjacent"/>
-    <disable_collisions link1="arm_link_1" link2="camera_link" reason="Never"/>
     <disable_collisions link1="arm_link_1" link2="wheel_fl_link" reason="Never"/>
     <disable_collisions link1="arm_link_1" link2="wheel_fr_link" reason="Never"/>
     <disable_collisions link1="arm_link_1" link2="wheel_rl_link" reason="Never"/>
     <disable_collisions link1="arm_link_1" link2="wheel_rr_link" reason="Never"/>
     <disable_collisions link1="arm_link_2" link2="arm_link_3" reason="Adjacent"/>
-    <disable_collisions link1="arm_link_2" link2="camera_link" reason="Never"/>
     <disable_collisions link1="arm_link_3" link2="arm_link_4" reason="Adjacent"/>
-    <disable_collisions link1="arm_link_3" link2="camera_link" reason="Never"/>
     <disable_collisions link1="arm_link_3" link2="gripper_finger_left_link" reason="Never"/>
     <disable_collisions link1="arm_link_3" link2="gripper_finger_right_link" reason="Never"/>
-    <disable_collisions link1="arm_link_4" link2="camera_link" reason="Adjacent"/>
     <disable_collisions link1="arm_link_4" link2="gripper_finger_left_link" reason="Adjacent"/>
     <disable_collisions link1="arm_link_4" link2="gripper_finger_right_link" reason="Adjacent"/>
     <disable_collisions link1="base_link" link2="wheel_fl_link" reason="Adjacent"/>
     <disable_collisions link1="base_link" link2="wheel_fr_link" reason="Adjacent"/>
     <disable_collisions link1="base_link" link2="wheel_rl_link" reason="Adjacent"/>
     <disable_collisions link1="base_link" link2="wheel_rr_link" reason="Adjacent"/>
-    <disable_collisions link1="camera_link" link2="gripper_finger_left_link" reason="Never"/>
-    <disable_collisions link1="camera_link" link2="gripper_finger_right_link" reason="Never"/>
     <disable_collisions link1="gripper_finger_left_link" link2="gripper_finger_right_link" reason="Adjacent"/>
     <disable_collisions link1="wheel_fl_link" link2="wheel_fr_link" reason="Never"/>
     <disable_collisions link1="wheel_fl_link" link2="wheel_rl_link" reason="Never"/>
