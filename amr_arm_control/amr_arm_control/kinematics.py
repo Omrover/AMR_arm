@@ -69,6 +69,30 @@ def fk(q, tcp_offset=0.0):
     return wrist(q) @ off
 
 
+def min_height(q, tcp_offset=TCP_OFFSET):
+    """Altura mínima (z en arm_base_link) del codo, la muñeca, tool0 y el TCP: qué
+    tan arriba de la placa va el brazo con esa forma. No depende de q1."""
+    elbow = _dh(q[0], L1, 0.0, math.pi / 2) @ _dh(q[1], 0.0, L2, 0.0)
+    return min(elbow[2, 3], wrist(q)[2, 3], fk(q)[2, 3], fk(q, tcp_offset)[2, 3])
+
+
+def rotate_first_mid(q0, q_goal, threshold):
+    """Pose intermedia para un giro grande de q1 (|dq1| >= threshold), o None.
+
+    Gira con la forma más alta de las dos (la de salida o la de llegada): de una
+    forma alta a una baja gira primero y luego baja; de una baja a una alta sube
+    primero y luego gira. Así el codo no barre el techo del chasis mientras gira.
+    None si el giro es chico o si solo cambia q1."""
+    q0, q_goal = list(q0), list(q_goal)
+    if threshold <= 0.0 or abs(q_goal[0] - q0[0]) < threshold:
+        return None
+    if max(abs(a - b) for a, b in zip(q0[1:], q_goal[1:])) < 1e-3:
+        return None
+    if min_height(q0) >= min_height(q_goal):
+        return [q_goal[0]] + q0[1:]      # gira con la forma de salida y luego baja
+    return [q0[0]] + q_goal[1:]          # sube con q1 de salida y luego gira
+
+
 def tool_pitch(q):
     """Pitch de la herramienta respecto a la horizontal (rad)."""
     return wrap(q[1] + q[2] + q[3] + math.pi)
