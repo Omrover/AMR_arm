@@ -59,7 +59,7 @@ HORIZONTAL = 0.0   # el gripper siempre paralelo al piso (pitch 0 hacia la pieza
 DEFAULT_POSES = {
     'rest': [3.14159, -0.05, 0.058, 0.0],     # sentado en su tope (calibración)
     'stow': [0.0, 0.865, -0.651, 1.357],        # TCP sobre el centro, 0.30 m arriba
-    'dock_view': [3.14159, -0.05, -0.15, 0.35],  # cámara al frente, -5°, a 0.44 m (dock)
+    'dock_view': [3.14159, 0.056, 0.087, -0.186],  # cámara al frente a 0.41 m (medida en el robot)
     'scan': [math.pi, 1.469, -0.965, 0.295],    # cámara 0.3 m adelante, 0.8 rad abajo
     'tray_above': [0.0, 1.149, -0.211, -0.938],    # TCP horizontal detrás, 0.53 m del piso
 }
@@ -114,6 +114,9 @@ class ArmServer(Node):
         d('goal_joint_tolerance', 0.005)  # rad en la meta de MoveIt
         d('linear_planner', 'LIN')       # Pilz: bajadas y subidas rectas
         d('park_unfold', 0.35)           # rad de codo para despegar el eslabón 4 del 2 (rest)
+        # Giros de q1 de al menos esto (rad): gira con la forma más alta y luego baja,
+        # o sube y luego gira (kinematics.rotate_first_mid). 0 = planear directo.
+        d('rotate_first', 0.5)
         d('gripper_joint', 'gripper_finger_joint')   # arm.yaml
         d('gripper_travel', 0.05)       # m: el joint con el gripper abierto (arm.yaml)
         g = lambda n: self.get_parameter(n).value  # noqa: E731
@@ -262,15 +265,36 @@ class ArmServer(Node):
             self.move_direct(goal_handle, q_out, 0.3)
         ok, pairs = self.state_valid(q_goal)
         if ok:
-            self.move_moveit(goal_handle, q_goal, scale, on_progress, linear)
+            if linear:
+                self.move_moveit(goal_handle, q_goal, scale, on_progress, True)
+            else:
+                self.move_planned(goal_handle, q_goal, scale, on_progress)
             return
         q_pre = self.unfolded(q_goal)
         if linear or not self.state_valid(q_pre)[0]:
             raise Failure(ERR_IK, f'la meta choca: {", ".join(pairs)}')
-        self.move_moveit(goal_handle, q_pre, scale, on_progress, False)
+        self.move_planned(goal_handle, q_pre, scale, on_progress)
         self.get_logger().info(f'último tramo a una pose en contacto ({", ".join(pairs)}) '
                                'sin MoveIt: cierro el codo')
         self.move_direct(goal_handle, q_goal, 0.3, on_progress)
+
+    def move_planned(self, goal_handle, q_goal, scale, on_progress):
+        """Traslado con OMPL. Con un giro grande de q1 lo parte en dos: girar con la
+        forma más alta y luego bajar (o subir y luego girar). Si la pose intermedia
+        choca, planea directo."""
+        q0 = self.joints_now()
+        mid = kin.rotate_first_mid(q0, q_goal, float(self.get_parameter('rotate_first').value))
+        if mid is not None:
+            ok, pairs = self.state_valid(mid)
+            if ok:
+                first = 'giro y luego cambio de forma' if mid[0] == q_goal[0] else \
+                    'cambio de forma y luego giro'
+                self.get_logger().info(f'giro de q1 de {abs(q_goal[0] - q0[0]):.2f} rad: {first}')
+                self.move_moveit(goal_handle, mid, scale, None, False)
+            else:
+                self.get_logger().warn(f'la pose intermedia del giro choca ({", ".join(pairs)}): '
+                                       'planeo directo')
+        self.move_moveit(goal_handle, q_goal, scale, on_progress, False)
 
     def move_direct(self, goal_handle, q_goal, scale=1.0, on_progress=None):
         """Punto a punto por el bridge (sin revisar colisiones)."""
