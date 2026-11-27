@@ -28,7 +28,7 @@
     <group_state name="rest" group="arm">
         <joint name="arm_joint_1" value="3.14159"/>
         <joint name="arm_joint_2" value="-0.05"/>
-        <joint name="arm_joint_3" value="0.058"/>
+        <joint name="arm_joint_3" value="0.087"/>
         <joint name="arm_joint_4" value="0"/>
     </group_state>
     <group_state name="stow" group="arm">
@@ -39,8 +39,8 @@
     </group_state>
     <group_state name="dock_view" group="arm">
         <joint name="arm_joint_1" value="3.14159"/>
-        <joint name="arm_joint_2" value="-0.02"/>
-        <joint name="arm_joint_3" value="0.02"/>
+        <joint name="arm_joint_2" value="0.056"/>
+        <joint name="arm_joint_3" value="0.087"/>
         <joint name="arm_joint_4" value="0"/>
     </group_state>
     <group_state name="scan" group="arm">

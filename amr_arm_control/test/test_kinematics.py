@@ -152,7 +152,7 @@ def test_sync_accelerations_finish_together():
 
 
 STOW = [0.0, 0.865, -0.651, 1.357]
-DOCK_VIEW = [math.pi, -0.02, 0.02, 0.0]
+DOCK_VIEW = [math.pi, 0.056, 0.087, 0.0]
 
 
 def test_stow_is_higher_than_dock_view():
