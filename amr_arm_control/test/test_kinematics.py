@@ -149,3 +149,29 @@ def test_sync_accelerations_finish_together():
     assert tr.duration(q0, q1, 2.0) == pytest.approx(2 * math.sqrt(1.0 / 2.0))
     assert tr.progress(q0, q1, [0.5, 0, 0, 1]) == pytest.approx(0.5)
     assert tr.progress(q0, q0, q0) == 1.0
+
+
+STOW = [0.0, 0.865, -0.651, 1.357]
+DOCK_VIEW = [math.pi, 0.056, 0.087, -0.186]
+
+
+def test_stow_is_higher_than_dock_view():
+    assert k.min_height(STOW) > k.min_height(DOCK_VIEW) + 0.05
+    # La altura no depende de q1.
+    assert k.min_height([2.0] + STOW[1:]) == pytest.approx(k.min_height(STOW))
+
+
+def test_rotate_first_from_high_to_low():
+    # stow -> dock_view: gira con la forma de stow y luego baja.
+    assert k.rotate_first_mid(STOW, DOCK_VIEW, 0.5) == [DOCK_VIEW[0]] + STOW[1:]
+
+
+def test_raise_first_from_low_to_high():
+    # dock_view -> stow: sube con q1 de salida y luego gira.
+    assert k.rotate_first_mid(DOCK_VIEW, STOW, 0.5) == [DOCK_VIEW[0]] + STOW[1:]
+
+
+def test_no_mid_for_small_turns_or_pure_rotation():
+    assert k.rotate_first_mid(STOW, [0.3] + STOW[1:3] + [1.0], 0.5) is None
+    assert k.rotate_first_mid(STOW, [math.pi] + STOW[1:], 0.5) is None
+    assert k.rotate_first_mid(STOW, DOCK_VIEW, 0.0) is None
