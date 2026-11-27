@@ -44,9 +44,9 @@
     </group_state>
     <group_state name="dock_view" group="arm">
         <joint name="arm_joint_1" value="3.14159"/>
-        <joint name="arm_joint_2" value="-0.05"/>
-        <joint name="arm_joint_3" value="-0.15"/>
-        <joint name="arm_joint_4" value="0.35"/>
+        <joint name="arm_joint_2" value="0.056"/>
+        <joint name="arm_joint_3" value="0.087"/>
+        <joint name="arm_joint_4" value="-0.186"/>
     </group_state>
     <group_state name="scan" group="arm">
         <joint name="arm_joint_1" value="3.14159"/>
