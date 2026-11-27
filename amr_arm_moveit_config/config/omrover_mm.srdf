@@ -1,12 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!--
-  Semántica de MoveIt del Mobile Manipulator. Los nombres de links y juntas son
-  los de amr_description (también los que debe conservar el export de SolidWorks).
-  Poses: las mismas que amr_arm_control/config/arm_server.yaml (test/test_srdf.py).
-
-  La matriz de colisiones la genera scripts/update_collisions.sh (collisions_updater,
-  20000 muestras, sin GUI). Regenerarla cuando cambie la geometría, p. ej. al pasar
-  a las mallas del CAD. Ese script reescribe este archivo y borra este comentario.
+<!--This does not replace URDF, and is not an extension of URDF.
+    This is a format for representing semantic information about the robot structure.
+    A URDF file must exist for this robot as well, where the joints and the links that are referenced are defined
 -->
 <robot name="omrover_mm">
     <!--GROUPS: Representation of a set of joints and links. This can be useful for specifying DOF to plan for, defining arms, end effectors, etc-->
@@ -69,29 +64,37 @@
     <!--END EFFECTOR: Purpose: Represent information about an end effector.-->
     <end_effector name="gripper" parent_link="tool0" group="gripper" parent_group="arm"/>
     <!--DISABLE COLLISIONS: By default it is assumed that any link of the robot could potentially come into collision with any other link in the robot. This tag disables collision checking between a specified pair of links. -->
-    <!-- Mallas del CAD (2026-11-26): la base del brazo va montada sobre base_link y la
-         cámara sobre arm_link_4. arm_link_1-arm_link_4 ya NO es "Never" (choca en ~2 % de
-         las poses con las mallas reales). Regenerar con scripts/update_collisions.sh. -->
-    <disable_collisions link1="arm_base_link" link2="base_link" reason="Adjacent"/>
     <disable_collisions link1="arm_base_link" link2="arm_link_1" reason="Adjacent"/>
-    <disable_collisions link1="arm_link_4" link2="camera_mount_link" reason="Adjacent"/>
+    <disable_collisions link1="arm_base_link" link2="arm_link_2" reason="Never"/>
+    <disable_collisions link1="arm_base_link" link2="arm_link_3" reason="Never"/>
+    <disable_collisions link1="arm_base_link" link2="base_link" reason="Adjacent"/>
+    <disable_collisions link1="arm_base_link" link2="wheel_fl_link" reason="Never"/>
+    <disable_collisions link1="arm_base_link" link2="wheel_fr_link" reason="Never"/>
+    <disable_collisions link1="arm_base_link" link2="wheel_rl_link" reason="Never"/>
+    <disable_collisions link1="arm_base_link" link2="wheel_rr_link" reason="Never"/>
     <disable_collisions link1="arm_link_1" link2="arm_link_2" reason="Adjacent"/>
     <disable_collisions link1="arm_link_1" link2="arm_link_3" reason="Never"/>
-    <disable_collisions link1="arm_link_1" link2="base_link" reason="Adjacent"/>
+    <disable_collisions link1="arm_link_1" link2="base_link" reason="Never"/>
     <disable_collisions link1="arm_link_1" link2="wheel_fl_link" reason="Never"/>
     <disable_collisions link1="arm_link_1" link2="wheel_fr_link" reason="Never"/>
     <disable_collisions link1="arm_link_1" link2="wheel_rl_link" reason="Never"/>
     <disable_collisions link1="arm_link_1" link2="wheel_rr_link" reason="Never"/>
     <disable_collisions link1="arm_link_2" link2="arm_link_3" reason="Adjacent"/>
+    <disable_collisions link1="arm_link_2" link2="wheel_fl_link" reason="Never"/>
+    <disable_collisions link1="arm_link_2" link2="wheel_fr_link" reason="Never"/>
     <disable_collisions link1="arm_link_3" link2="arm_link_4" reason="Adjacent"/>
+    <disable_collisions link1="arm_link_3" link2="camera_mount_link" reason="Never"/>
     <disable_collisions link1="arm_link_3" link2="gripper_finger_left_link" reason="Never"/>
     <disable_collisions link1="arm_link_3" link2="gripper_finger_right_link" reason="Never"/>
+    <disable_collisions link1="arm_link_4" link2="camera_mount_link" reason="Adjacent"/>
     <disable_collisions link1="arm_link_4" link2="gripper_finger_left_link" reason="Adjacent"/>
     <disable_collisions link1="arm_link_4" link2="gripper_finger_right_link" reason="Adjacent"/>
     <disable_collisions link1="base_link" link2="wheel_fl_link" reason="Adjacent"/>
     <disable_collisions link1="base_link" link2="wheel_fr_link" reason="Adjacent"/>
     <disable_collisions link1="base_link" link2="wheel_rl_link" reason="Adjacent"/>
     <disable_collisions link1="base_link" link2="wheel_rr_link" reason="Adjacent"/>
+    <disable_collisions link1="camera_mount_link" link2="gripper_finger_left_link" reason="Never"/>
+    <disable_collisions link1="camera_mount_link" link2="gripper_finger_right_link" reason="Never"/>
     <disable_collisions link1="gripper_finger_left_link" link2="gripper_finger_right_link" reason="Adjacent"/>
     <disable_collisions link1="wheel_fl_link" link2="wheel_fr_link" reason="Never"/>
     <disable_collisions link1="wheel_fl_link" link2="wheel_rl_link" reason="Never"/>
