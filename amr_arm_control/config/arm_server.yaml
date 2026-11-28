@@ -21,7 +21,10 @@ arm_server:
       # dock_view: ajustada en el robot (2026-11-27): eslabón 2 apenas arriba del tope,
       # codo como en rest y gripper colineal con l4 (q4 = 0).
       dock_view: [3.14159, 0.056, 0.0, 0.0]
-      scan: [3.14159, 1.469, -1.052, 0.017]
+      # scan: [180, 42, -30, -10]° ajustada en el robot (2026-11-27). El eslabón 2 inclinado
+      # carga la junta 2 con la gravedad (-8 N·m): la anterior, casi vertical (+2.9 N·m),
+      # temblaba por el juego del reductor.
+      scan: [3.14159, 0.733, -0.524, -0.175]
       # tray_above: sobre la bandeja detrás del brazo, ~0.53 m del piso. Con el gripper
       # horizontal la bandeja tiene que ir elevada (~0.50-0.84 m, reach_map).
       tray_above: [0.0, 1.149, -0.298, -0.785]

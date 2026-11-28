@@ -60,7 +60,7 @@ DEFAULT_POSES = {
     'rest': [3.14159, -0.05, 0.0, 0.0],       # sentado en su tope, codo a 90°
     'stow': [0.0, 0.865, -0.738, 1.570],        # todo arriba del robot, gripper a 90°
     'dock_view': [3.14159, 0.056, 0.0, 0.0],  # gripper horizontal, cámara al frente a 0.415 m
-    'scan': [math.pi, 1.469, -1.052, 0.017],    # cámara adelante y abajo, gripper a 1°
+    'scan': [math.pi, 0.733, -0.524, -0.175],   # [180, 42, -30, -10]°: cámara al frente
     'tray_above': [0.0, 1.149, -0.298, -0.785],    # sobre la bandeja, gripper a -45°
 }
 

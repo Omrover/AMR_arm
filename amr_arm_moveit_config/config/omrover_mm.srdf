@@ -45,9 +45,9 @@
     </group_state>
     <group_state name="scan" group="arm">
         <joint name="arm_joint_1" value="3.14159"/>
-        <joint name="arm_joint_2" value="1.469"/>
-        <joint name="arm_joint_3" value="-1.052"/>
-        <joint name="arm_joint_4" value="0.017"/>
+        <joint name="arm_joint_2" value="0.733"/>
+        <joint name="arm_joint_3" value="-0.524"/>
+        <joint name="arm_joint_4" value="-0.175"/>
     </group_state>
     <group_state name="tray_above" group="arm">
         <joint name="arm_joint_1" value="0"/>
