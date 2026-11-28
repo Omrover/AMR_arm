@@ -175,3 +175,33 @@ def test_no_mid_for_small_turns_or_pure_rotation():
     assert k.rotate_first_mid(STOW, [0.3] + STOW[1:3] + [1.0], 0.5) is None
     assert k.rotate_first_mid(STOW, [math.pi] + STOW[1:], 0.5) is None
     assert k.rotate_first_mid(STOW, DOCK_VIEW, 0.0) is None
+
+
+def _grasp_line():
+    # Pieza a (0.50, 0, 0.55) en base_footprint (montaje x 0.1194, z 0.196), rama over.
+    seed = [math.pi, 1.149, -0.298, -0.938]
+    p = np.array([0.50 - 0.1194, 0.0, 0.55 - 0.196])
+    q_pre = k.ik(*(p - [0.08, 0, 0]), 0.0, LOWER, UPPER, seed=seed, branch='over')
+    q_at = k.ik(*p, 0.0, LOWER, UPPER, seed=q_pre, branch='over')
+    return q_pre, q_at
+
+
+def test_line_joints_keeps_tcp_on_the_line_and_horizontal():
+    q_pre, q_at = _grasp_line()
+    path, why = k.line_joints(q_pre, q_at, LOWER, UPPER)
+    assert path is not None, why
+    assert path[0] == q_pre and path[-1] == q_at and len(path) >= 8
+    p0, p1 = tcp(q_pre), tcp(q_at)
+    u = (p1 - p0) / np.linalg.norm(p1 - p0)
+    for q in path:
+        d = tcp(q) - p0
+        assert np.linalg.norm(d - (d @ u) * u) < 1e-6
+        assert k.approach_pitch(q) == pytest.approx(0.0, abs=1e-6)
+    steps = [max(abs(a - b) for a, b in zip(x, y)) for x, y in zip(path, path[1:])]
+    assert max(steps) < 0.1
+
+
+def test_line_joints_rejects_unreachable_line():
+    _, q_at = _grasp_line()
+    path, why = k.line_joints(q_at, [q_at[0], 3.4, -0.1, 0.0], LOWER, UPPER)
+    assert path is None and why

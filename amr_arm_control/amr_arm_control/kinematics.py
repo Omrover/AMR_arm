@@ -93,6 +93,36 @@ def rotate_first_mid(q0, q_goal, threshold):
     return [q0[0]] + q_goal[1:]          # sube con q1 de salida y luego gira
 
 
+def line_joints(q_from, q_to, lower, upper, step=0.01, max_jump=0.2, tcp_offset=TCP_OFFSET):
+    """Trayectoria en juntas que lleva el TCP en línea recta de fk(q_from) a fk(q_to),
+    con el pitch interpolado entre los dos (la IK de cada punto parte del anterior,
+    así que no cambia de rama).
+
+    Devuelve (lista de q, '') o (None, motivo). El primer punto es q_from y el
+    último q_to. max_jump (rad): salto máximo de una junta entre puntos vecinos;
+    uno mayor indica que la recta pasa por un límite o cambia de rama."""
+    q_from, q_to = list(q_from), list(q_to)
+    p0, p1 = fk(q_from, tcp_offset)[:3, 3], fk(q_to, tcp_offset)[:3, 3]
+    a0, a1 = approach_pitch(q_from, tcp_offset), approach_pitch(q_to, tcp_offset)
+    n = max(1, int(math.ceil(float(np.linalg.norm(p1 - p0)) / step)))
+    path, prev = [q_from], q_from
+    for i in range(1, n):
+        s = i / n
+        p = p0 + s * (p1 - p0)
+        q = ik(p[0], p[1], p[2], a0 + s * (a1 - a0), lower, upper, seed=prev,
+               tcp_offset=tcp_offset)
+        if q is None:
+            return None, f'sin IK a {100 * s:.0f}% de la recta ({p.round(3).tolist()})'
+        if max(abs(a - b) for a, b in zip(q, prev)) > max_jump:
+            return None, f'la IK salta de rama a {100 * s:.0f}% de la recta'
+        path.append(q)
+        prev = q
+    if max(abs(a - b) for a, b in zip(q_to, prev)) > max_jump:
+        return None, 'la meta no es continua con la recta (otra rama de la IK)'
+    path.append(q_to)
+    return path, ''
+
+
 def tool_pitch(q):
     """Pitch de la herramienta respecto a la horizontal (rad)."""
     return wrap(q[1] + q[2] + q[3] + math.pi)

@@ -5,11 +5,14 @@
     place_object  sobre el destino -> bajar -> abrir -> subir
 
 Con use_moveit (por defecto) cada movimiento se planea y ejecuta con
-move_group: los traslados con OMPL (libres de colisión) y las bajadas/subidas
-de pick y place en línea recta con Pilz LIN. La IK analítica (posición del TCP
-+ pitch) sigue dando las metas en juntas, exactas para 4 GDL. La ejecución la
-hace arm_controller sobre el bridge. Con use_moveit:=false manda punto a punto
-sincronizado directo por llc/arm_command (trajectory.py), sin revisar colisiones.
+move_group: los traslados se planean con OMPL (libres de colisión). Las
+bajadas/subidas de pick y place van en línea recta: la recta se muestrea cada
+1 cm con la IK analítica (posición del TCP + pitch, exacta para 4 GDL), se
+revisa cada punto contra colisiones y se ejecuta con execute_trajectory. (Pilz
+LIN no sirve aquí: usa pick_ik solo de posición, que salta de solución a media
+recta.) La ejecución la hace arm_controller sobre el bridge. Con use_moveit:=false
+manda punto a punto sincronizado directo por llc/arm_command (trajectory.py), sin
+revisar colisiones.
 
 El gripper va directo por llc/set_gripper; el estado se sigue con
 /joint_states y arm/status. Al cancelar, el brazo se queda donde está.
@@ -28,9 +31,11 @@ from rclpy.time import Time
 from sensor_msgs.msg import JointState
 from tf2_ros import Buffer, TransformException, TransformListener
 
-from moveit_msgs.action import MoveGroup
+from builtin_interfaces.msg import Duration
+from moveit_msgs.action import ExecuteTrajectory, MoveGroup
 from moveit_msgs.msg import (Constraints, JointConstraint, MotionPlanRequest, MoveItErrorCodes,
-                             RobotState)
+                             RobotState, RobotTrajectory)
+from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 from moveit_msgs.srv import GetStateValidity
 
 from amr_interfaces.action import MoveArm, PickObject, PlaceObject
@@ -41,8 +46,8 @@ from . import kinematics as kin
 from . import trajectory as traj
 
 OK, ERR_IK, ERR_LIMITS, ERR_MCU, ERR_TIMEOUT, ERR_CANCELED, ERR_GRASP = 0, 1, 2, 3, 4, 5, 6
-# MoveItErrorCodes -> error_code de las acciones. Sin plan (colisión, IK de
-# Pilz, tiempo) cuenta como ERR_IK: la meta existe pero no es alcanzable.
+# MoveItErrorCodes -> error_code de las acciones. Sin plan (colisión, tiempo)
+# cuenta como ERR_IK: la meta existe pero no es alcanzable.
 # Las constantes de los mensajes ROS viven en la metaclase.
 MOVEIT_NAMES = {getattr(MoveItErrorCodes, k): k for k in dir(type(MoveItErrorCodes))
                 if k.isupper() and isinstance(getattr(MoveItErrorCodes, k, None), int)}
@@ -112,7 +117,7 @@ class ArmServer(Node):
         d('planning_time', 5.0)          # s por intento
         d('planning_attempts', 3)
         d('goal_joint_tolerance', 0.005)  # rad en la meta de MoveIt
-        d('linear_planner', 'LIN')       # Pilz: bajadas y subidas rectas
+        d('linear_step', 0.01)           # m entre puntos de las rectas (bajadas y subidas)
         d('park_unfold', 0.35)           # rad de codo para despegar el eslabón 4 del 2 (rest)
         # Giros de q1 de al menos esto (rad): gira con la forma más alta y luego baja,
         # o sube y luego gira (kinematics.rotate_first_mid). 0 = planear directo.
@@ -141,6 +146,8 @@ class ArmServer(Node):
         self.arm_cli = self.create_client(ArmCommand, 'llc/arm_command', callback_group=cb)
         self.grip_cli = self.create_client(SetGripper, 'llc/set_gripper', callback_group=cb)
         self.move_group = ActionClient(self, MoveGroup, 'move_action', callback_group=cb)
+        self.execute = ActionClient(self, ExecuteTrajectory, 'execute_trajectory',
+                                    callback_group=cb)
         self.validity_cli = self.create_client(GetStateValidity, 'check_state_validity',
                                                callback_group=cb)
         self.tf = Buffer()
@@ -215,7 +222,7 @@ class ArmServer(Node):
                 self.get_logger().error(f'no se pudo detener el brazo: {e}')
 
     def move_joints(self, goal_handle, q_goal, scale=1.0, on_progress=None, linear=False):
-        """Mueve a q_goal. linear: el TCP en línea recta (Pilz LIN; sin MoveIt
+        """Mueve a q_goal. linear: el TCP en línea recta (move_linear; sin MoveIt
         es punto a punto como cualquier otro movimiento)."""
         if len(q_goal) != len(self.joints):
             raise Failure(ERR_LIMITS, f'se esperaban {len(self.joints)} juntas')
@@ -231,14 +238,15 @@ class ArmServer(Node):
             return
         self.move_direct(goal_handle, q_goal, scale, on_progress)
 
-    def state_valid(self, q):
-        """(válida, pares en contacto) según move_group, con el gripper cerrado."""
+    def state_valid(self, q, grip=0.0):
+        """(válida, pares en contacto) según move_group (gripper cerrado por defecto)."""
         g = lambda n: self.get_parameter(n).value  # noqa: E731
         if not self.validity_cli.wait_for_service(timeout_sec=5.0):
             raise Failure(ERR_MCU, 'sin move_group (servicio check_state_validity)')
         req = GetStateValidity.Request(group_name=g('planning_group'))
         req.robot_state = RobotState(joint_state=JointState(
-            name=self.joints + [g('gripper_joint')], position=[float(a) for a in q] + [0.0]))
+            name=self.joints + [g('gripper_joint')],
+            position=[float(a) for a in q] + [float(grip)]))
         res = self.wait_future(self.validity_cli.call_async(req), 5.0, 'check_state_validity')
         return res.valid, sorted({f'{c.contact_body_1}-{c.contact_body_2}' for c in res.contacts})
 
@@ -266,7 +274,7 @@ class ArmServer(Node):
         ok, pairs = self.state_valid(q_goal)
         if ok:
             if linear:
-                self.move_moveit(goal_handle, q_goal, scale, on_progress, True)
+                self.move_linear(goal_handle, q_goal, scale, on_progress)
             else:
                 self.move_planned(goal_handle, q_goal, scale, on_progress)
             return
@@ -290,11 +298,43 @@ class ArmServer(Node):
                 first = 'giro y luego cambio de forma' if mid[0] == q_goal[0] else \
                     'cambio de forma y luego giro'
                 self.get_logger().info(f'giro de q1 de {abs(q_goal[0] - q0[0]):.2f} rad: {first}')
-                self.move_moveit(goal_handle, mid, scale, None, False)
+                self.move_moveit(goal_handle, mid, scale, None)
             else:
                 self.get_logger().warn(f'la pose intermedia del giro choca ({", ".join(pairs)}): '
                                        'planeo directo')
-        self.move_moveit(goal_handle, q_goal, scale, on_progress, False)
+        self.move_moveit(goal_handle, q_goal, scale, on_progress)
+
+    def move_linear(self, goal_handle, q_goal, scale, on_progress):
+        """El TCP en línea recta hasta fk(q_goal) (kinematics.line_joints), cada punto
+        revisado con el gripper abierto y cerrado, ejecutado por execute_trajectory."""
+        g = lambda n: self.get_parameter(n).value  # noqa: E731
+        q0 = self.joints_now()
+        path, why = kin.line_joints(q0, q_goal, self.lower, self.upper,
+                                    step=float(g('linear_step')))
+        if path is None:
+            raise Failure(ERR_IK, f'recta imposible: {why}')
+        for q in path[1:-1]:
+            for grip in (float(g('gripper_travel')), 0.0):
+                ok, pairs = self.state_valid(q, grip)
+                if not ok:
+                    raise Failure(ERR_IK, f'la recta choca: {", ".join(pairs)}')
+        s = max(0.05, min(1.0, scale or 1.0))
+        a_max = float(g('max_accel')) * s
+        jt = JointTrajectory(joint_names=list(self.joints))
+        t = 0.0
+        for i, q in enumerate(path):
+            if i:
+                t += traj.duration(path[i - 1], q, a_max)
+            jt.points.append(JointTrajectoryPoint(
+                positions=[float(v) for v in q],
+                time_from_start=Duration(sec=int(t), nanosec=int((t % 1.0) * 1e9))))
+        if not self.execute.wait_for_server(timeout_sec=5.0):
+            raise Failure(ERR_MCU, 'sin move_group (acción execute_trajectory)')
+        goal = ExecuteTrajectory.Goal(trajectory=RobotTrajectory(joint_trajectory=jt))
+        gh = self.wait_future(self.execute.send_goal_async(goal), 10.0, 'execute_trajectory')
+        if not gh.accepted:
+            raise Failure(ERR_MCU, 'move_group rechazó la trayectoria')
+        self.await_moveit(goal_handle, gh, 3.0 * t + 30.0, q0, q_goal, on_progress, 'recta')
 
     def move_direct(self, goal_handle, q_goal, scale=1.0, on_progress=None):
         """Punto a punto por el bridge (sin revisar colisiones)."""
@@ -368,8 +408,8 @@ class ArmServer(Node):
                         raise Failure(ERR_IK, f'la pose {name} choca (gripper {grip_name}{margin}): '
                                               f'{", ".join(pairs) or "inválida"}')
 
-    def move_moveit(self, goal_handle, q_goal, scale, on_progress, linear):
-        """Planea y ejecuta con move_group hasta q_goal (meta en juntas)."""
+    def move_moveit(self, goal_handle, q_goal, scale, on_progress):
+        """Planea (OMPL) y ejecuta con move_group hasta q_goal (meta en juntas)."""
         g = lambda n: self.get_parameter(n).value  # noqa: E731
         if not self.move_group.wait_for_server(timeout_sec=5.0):
             raise Failure(ERR_MCU, 'sin move_group (acción move_action)')
@@ -379,9 +419,6 @@ class ArmServer(Node):
             group_name=g('planning_group'), num_planning_attempts=int(g('planning_attempts')),
             allowed_planning_time=float(g('planning_time')),
             max_velocity_scaling_factor=s, max_acceleration_scaling_factor=s)
-        if linear:
-            req.pipeline_id = 'pilz_industrial_motion_planner'
-            req.planner_id = g('linear_planner')
         req.goal_constraints.append(Constraints(joint_constraints=[
             JointConstraint(joint_name=j, position=float(v), tolerance_above=tol,
                             tolerance_below=tol, weight=1.0)
@@ -392,11 +429,15 @@ class ArmServer(Node):
         gh = self.wait_future(self.move_group.send_goal_async(goal), 10.0, 'move_group')
         if not gh.accepted:
             raise Failure(ERR_MCU, 'move_group rechazó la meta')
-        res = gh.get_result_async()
         # Holgado: move_group vigila la ejecución; esto solo cubre que se caiga.
         a_max = g('max_accel') * s
         limit = (float(g('planning_time')) * int(g('planning_attempts')) +
                  3.0 * traj.duration(q0, q_goal, a_max) + 30.0)
+        self.await_moveit(goal_handle, gh, limit, q0, q_goal, on_progress, 'OMPL')
+
+    def await_moveit(self, goal_handle, gh, limit, q0, q_goal, on_progress, what):
+        """Espera el resultado de una acción de move_group (cancelar, timeout, error)."""
+        res = gh.get_result_async()
         end = time.monotonic() + limit
         while not res.done():
             if goal_handle is not None and goal_handle.is_cancel_requested:
@@ -413,7 +454,6 @@ class ArmServer(Node):
             time.sleep(0.05)
         code = res.result().result.error_code.val
         if code != MoveItErrorCodes.SUCCESS:
-            what = 'LIN' if linear else 'OMPL'
             raise Failure(MOVEIT_ERRORS.get(code, ERR_IK),
                           f'MoveIt ({what}): {MOVEIT_NAMES.get(code, code)}')
 

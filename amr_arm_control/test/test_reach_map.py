@@ -4,7 +4,7 @@ import math
 from amr_arm_control import reach_map as rm
 
 # Geometría por defecto del mapa (CAD, montaje provisional) y límites del CAD.
-GEOM = argparse.Namespace(mount_x=0.1394, mount_z=0.196, front=0.26, back=0.33,
+GEOM = argparse.Namespace(mount_x=0.1194, mount_z=0.196, front=0.26, back=0.33,
                           top=0.20, lidar_x=0.3045, lidar_top=0.29, clearance=0.03,
                           approach=0.08, lift=0.05, lower=None, upper=None)
 EDGE = 0.26 + 0.08          # borde de la mesa: frente del chasis + 8 cm
