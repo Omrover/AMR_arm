@@ -57,11 +57,11 @@ HORIZONTAL = 0.0   # el gripper siempre paralelo al piso (pitch 0 hacia la pieza
 # Poses (rad, convención DH) con todos los eslabones fuera del plano del LiDAR;
 # las de config/arm_server.yaml tienen prioridad.
 DEFAULT_POSES = {
-    'rest': [3.14159, -0.05, 0.087, 0.0],     # sentado en su tope (calibración)
-    'stow': [0.0, 0.865, -0.651, 1.357],        # TCP sobre el centro, 0.30 m arriba
-    'dock_view': [3.14159, 0.056, 0.087, 0.0],  # gripper horizontal, cámara al frente a 0.415 m
-    'scan': [math.pi, 1.469, -0.965, 0.295],    # cámara 0.3 m adelante, 0.8 rad abajo
-    'tray_above': [0.0, 1.149, -0.211, -0.938],    # TCP horizontal detrás, 0.53 m del piso
+    'rest': [3.14159, -0.05, 0.0, 0.0],       # sentado en su tope, codo a 90°
+    'stow': [0.0, 0.865, -0.738, 1.570],        # todo arriba del robot, gripper a 90°
+    'dock_view': [3.14159, 0.056, 0.0, 0.0],  # gripper horizontal, cámara al frente a 0.415 m
+    'scan': [math.pi, 1.469, -1.052, 0.017],    # cámara adelante y abajo, gripper a 1°
+    'tray_above': [0.0, 1.149, -0.298, -0.785],    # sobre la bandeja, gripper a -45°
 }
 
 
@@ -99,7 +99,7 @@ class ArmServer(Node):
         # al lado contrario de la pieza y el brazo pasa por encima con el codo arriba.
         # grasp_branch: 'over' (esa forma), 'direct' o '' (la más cercana a la actual).
         d('grasp_branch', 'over')
-        d('grasp_shape', [1.149, -0.211, -0.938])
+        d('grasp_shape', [1.149, -0.298, -0.938])
         d('lift_height', 0.12)
         d('place_clearance', 0.01)       # m sobre la superficie al soltar
         d('gripper_open', 0.0)

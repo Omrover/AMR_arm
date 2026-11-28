@@ -78,7 +78,7 @@ def test_horizontal_grasp_in_front_of_robot():
 def test_over_branch_has_tray_above_shape():
     # Pieza al frente sobre una mesa: la rama 'over' (la de arm_server) pone la junta 1
     # al lado contrario (q1 = pi) y el brazo por encima, como tray_above.
-    q = k.ik(0.50, 0.0, 0.3645, 0.0, LOWER, UPPER, seed=[math.pi, 1.149, -0.211, -0.938],
+    q = k.ik(0.50, 0.0, 0.3645, 0.0, LOWER, UPPER, seed=[math.pi, 1.149, -0.298, -0.938],
              branch='over')
     assert q is not None and q[0] == pytest.approx(math.pi)
     assert q[1] > math.pi / 2 and q[2] < 0 and q[3] < 0
@@ -151,8 +151,8 @@ def test_sync_accelerations_finish_together():
     assert tr.progress(q0, q0, q0) == 1.0
 
 
-STOW = [0.0, 0.865, -0.651, 1.357]
-DOCK_VIEW = [math.pi, 0.056, 0.087, 0.0]
+STOW = [0.0, 0.865, -0.738, 1.570]
+DOCK_VIEW = [math.pi, 0.056, 0.0, 0.0]
 
 
 def test_stow_is_higher_than_dock_view():
